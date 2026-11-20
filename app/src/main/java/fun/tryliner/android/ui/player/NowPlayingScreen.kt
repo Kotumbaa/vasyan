@@ -1,0 +1,874 @@
+package `fun`.tryliner.android.ui.player
+
+import android.os.Build
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Computer
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.Lyrics
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Shuffle
+import androidx.compose.material.icons.rounded.SkipNext
+import androidx.compose.material.icons.rounded.SkipPrevious
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.BlurredEdgeTreatment
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import `fun`.tryliner.android.LinerApplication
+import `fun`.tryliner.android.R
+import `fun`.tryliner.android.core.lyrics.LyricLine
+import `fun`.tryliner.android.core.lyrics.SyncedLyrics
+import `fun`.tryliner.android.core.model.Cover
+import `fun`.tryliner.android.core.model.Track
+import `fun`.tryliner.android.core.model.TrackArtist
+import `fun`.tryliner.android.playback.PlaybackUiState
+import `fun`.tryliner.android.playback.RemotePlaybackState
+import `fun`.tryliner.android.ui.components.LinerCoverArt
+import `fun`.tryliner.android.ui.components.formatDurationMs
+import `fun`.tryliner.android.ui.components.rememberCoverAmbient
+import `fun`.tryliner.android.ui.theme.LinerColors
+
+private val BackdropBase = Color(0xFF0D0F14)
+
+@Composable
+fun NowPlayingScreen(
+    playbackState: PlaybackUiState,
+    isLiked: Boolean,
+    onCollapse: () -> Unit,
+    onToggleLike: () -> Unit,
+    onTogglePlayPause: () -> Unit,
+    onNext: () -> Unit,
+    onPrevious: () -> Unit,
+    onToggleShuffle: () -> Unit,
+    onSeekTo: (Long) -> Unit
+) {
+    val app = LocalContext.current.applicationContext as? LinerApplication
+    val lanConnectManager = app?.container?.lanConnectManager
+    val remoteState: RemotePlaybackState? = if (lanConnectManager != null) {
+        lanConnectManager.remoteState.collectAsState().value
+    } else {
+        null
+    }
+    val lanConnected: Boolean = if (lanConnectManager != null) {
+        lanConnectManager.isConnected.collectAsState().value
+    } else {
+        false
+    }
+
+    val isRemoteMode = (playbackState.currentTrack == null && remoteState?.track != null) ||
+        (!playbackState.isPlaying && !playbackState.isBuffering && remoteState?.isPlaying == true && remoteState.track != null)
+
+    val track: Track? = if (isRemoteMode) {
+        remoteState?.track?.let { rt ->
+            Track(
+                id = rt.id,
+                title = rt.title,
+                artists = if (rt.artist.isBlank()) emptyList() else listOf(TrackArtist(id = "", name = rt.artist)),
+                durationMs = rt.durationMs,
+                cover = rt.coverUrl?.takeIf { it.isNotBlank() }?.let { Cover(url = it, width = 0, height = 0) }
+            )
+        }
+    } else {
+        playbackState.currentTrack
+    }
+
+    val effectiveIsPlaying = if (isRemoteMode) (remoteState?.isPlaying == true) else playbackState.isPlaying
+    val effectiveIsBuffering = if (isRemoteMode) false else playbackState.isBuffering
+    val rawDurationMs = if (isRemoteMode) {
+        (remoteState?.durationMs ?: 0L).coerceAtLeast(track?.durationMs ?: 0L)
+    } else {
+        playbackState.durationMs
+    }
+    var showLyrics by remember { mutableStateOf(false) }
+    var scrubbingPositionMs by remember { mutableStateOf<Long?>(null) }
+
+    val durationMs = rawDurationMs.coerceAtLeast(1L)
+    val basePositionMs = if (isRemoteMode) (remoteState?.positionMs ?: 0L) else playbackState.positionMs
+    val displayedPositionMs = scrubbingPositionMs ?: basePositionMs
+
+    val effectiveTogglePlayPause: () -> Unit = if (isRemoteMode) {
+        { lanConnectManager?.sendCommand("toggle") }
+    } else {
+        onTogglePlayPause
+    }
+    val effectiveNext: () -> Unit = if (isRemoteMode) {
+        { lanConnectManager?.sendCommand("next") }
+    } else {
+        onNext
+    }
+    val effectivePrevious: () -> Unit = if (isRemoteMode) {
+        { lanConnectManager?.sendCommand("prev") }
+    } else {
+        onPrevious
+    }
+    val effectiveSeekTo: (Long) -> Unit = if (isRemoteMode) {
+        { ms -> lanConnectManager?.sendCommand("seek", positionMs = ms) }
+    } else {
+        onSeekTo
+    }
+
+    val coverUrl = track?.cover?.url ?: track?.cover?.fallbackUrl
+    val coverAmbient = rememberCoverAmbient(coverUrl)
+    val targetTopColor = coverAmbient?.backdropColor ?: LinerColors.AmbientBlue
+    val targetMidColor = coverAmbient?.backdropColor?.copy(alpha = 0.72f) ?: LinerColors.AmbientBlue.copy(alpha = 0.72f)
+    val topColor by animateColorAsState(
+        targetValue = targetTopColor,
+        animationSpec = tween(durationMillis = 550),
+        label = "nowPlayingTopColor"
+    )
+    val midColor by animateColorAsState(
+        targetValue = targetMidColor,
+        animationSpec = tween(durationMillis = 550),
+        label = "nowPlayingMidColor"
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(BackdropBase)
+    ) {
+        // Blurred cover-art ambient layer behind the gradient (matching desktop FullscreenPlayer)
+        val blurredBitmap = coverAmbient?.blurredBitmap
+        if (blurredBitmap != null) {
+            Crossfade(
+                targetState = blurredBitmap,
+                animationSpec = tween(durationMillis = 600),
+                label = "nowPlayingCoverBlur"
+            ) { bitmap ->
+                val blurModifier = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    Modifier.blur(56.dp, edgeTreatment = BlurredEdgeTreatment.Rectangle)
+                } else {
+                    Modifier
+                }
+                Image(
+                    bitmap = bitmap,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    filterQuality = FilterQuality.High,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .alpha(0.38f)
+                        .then(blurModifier)
+                )
+            }
+        }
+
+        // Deep desaturated ambient gradient spanning 55% height and fading smoothly into #0D0F14
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        0.0f to topColor.copy(alpha = 0.82f),
+                        0.28f to midColor.copy(alpha = 0.65f),
+                        0.55f to BackdropBase.copy(alpha = 0.94f),
+                        1.0f to BackdropBase
+                    )
+                )
+        )
+
+        // Subtle radial aura behind the upper stage
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.55f)
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(
+                            topColor.copy(alpha = 0.28f),
+                            Color.Transparent
+                        ),
+                        radius = 900f
+                    )
+                )
+        )
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .padding(horizontal = 24.dp, vertical = 12.dp)
+        ) {
+            // Top bar: borderless soft white@0.08f pills
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Surface(
+                    onClick = onCollapse,
+                    shape = RoundedCornerShape(999.dp),
+                    color = Color.White.copy(alpha = 0.08f),
+                    modifier = Modifier.size(38.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Rounded.KeyboardArrowDown,
+                            contentDescription = stringResource(R.string.cd_back),
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (showLyrics) {
+                        val providerLabel = playbackState.lyrics?.provider
+                            ?.takeIf { it.isNotBlank() }
+                            ?.lowercase()
+                            ?: "lrclib"
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = Color.White.copy(alpha = 0.08f)
+                        ) {
+                            Text(
+                                text = providerLabel,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium
+                                ),
+                                color = Color.White.copy(alpha = 0.72f),
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                            )
+                        }
+                    }
+
+                    Surface(
+                        onClick = { showLyrics = !showLyrics },
+                        shape = RoundedCornerShape(999.dp),
+                        color = if (showLyrics) {
+                            Color.White.copy(alpha = 0.16f)
+                        } else {
+                            Color.White.copy(alpha = 0.08f)
+                        }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Lyrics,
+                                contentDescription = stringResource(R.string.cd_lyrics),
+                                tint = if (showLyrics) Color.White else Color.White.copy(alpha = 0.72f),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "Lyrics",
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontWeight = if (showLyrics) FontWeight.SemiBold else FontWeight.Medium
+                                ),
+                                color = if (showLyrics) Color.White else Color.White.copy(alpha = 0.72f)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Compact LAN Connect indicator / handoff pill when a desktop peer is active
+            if (lanConnectManager != null && (lanConnected || remoteState != null)) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    LanConnectPill(
+                        deviceName = remoteState?.deviceName ?: "Desktop",
+                        actionLabel = if (isRemoteMode) "Play on Phone" else if (track != null) "Play on PC" else null,
+                        onAction = {
+                            if (isRemoteMode) {
+                                lanConnectManager.handoffToPhone()
+                            } else {
+                                lanConnectManager.handoffToRemote()
+                            }
+                        }
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Main center area: Artwork or Borderless Lyrics with vertical fade mask
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentAlignment = Alignment.Center
+            ) {
+                AnimatedContent(
+                    targetState = showLyrics,
+                    transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(180)) },
+                    label = "now_playing_center"
+                ) { lyricsVisible ->
+                    if (lyricsVisible) {
+                        NowPlayingLyricsView(
+                            lyrics = playbackState.lyrics,
+                            positionMs = displayedPositionMs,
+                            isLoading = playbackState.isLyricsLoading,
+                            onSeekTo = onSeekTo,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            val coverShape = RoundedCornerShape(16.dp)
+                            LinerCoverArt(
+                                url = track?.cover?.url ?: track?.cover?.fallbackUrl,
+                                contentDescription = track?.title,
+                                size = 320.dp,
+                                shape = coverShape,
+                                modifier = Modifier
+                                    .fillMaxWidth(0.88f)
+                                    .aspectRatio(1f)
+                                    .shadow(
+                                        elevation = 28.dp,
+                                        shape = coverShape,
+                                        clip = false,
+                                        ambientColor = Color.Black.copy(alpha = 0.65f),
+                                        spotColor = Color.Black.copy(alpha = 0.75f)
+                                    )
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Track metadata + monochrome white heart button
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = track?.title ?: "Nothing playing",
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontSize = 21.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Text(
+                        text = track?.artistNames?.ifBlank { "Unknown Artist" } ?: "",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = 0.65f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                if (track != null) {
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Surface(
+                        onClick = onToggleLike,
+                        shape = RoundedCornerShape(999.dp),
+                        color = if (isLiked) {
+                            Color.White.copy(alpha = 0.14f)
+                        } else {
+                            Color.White.copy(alpha = 0.08f)
+                        },
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = if (isLiked) {
+                                    Icons.Rounded.Favorite
+                                } else {
+                                    Icons.Rounded.FavoriteBorder
+                                },
+                                contentDescription = stringResource(
+                                    if (isLiked) R.string.cd_unlike else R.string.cd_like
+                                ),
+                                tint = if (isLiked) Color.White else Color.White.copy(alpha = 0.75f),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (!playbackState.errorMessage.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = playbackState.errorMessage.orEmpty(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.75f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Minimalist 4.dp scrubber (no thumb bar, no end dot)
+            val progressFraction = (displayedPositionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+            MinimalScrubber(
+                progress = progressFraction,
+                durationMs = durationMs,
+                onScrub = { scrubbingPositionMs = it },
+                onScrubEnd = { finalMs ->
+                    effectiveSeekTo(finalMs)
+                    scrubbingPositionMs = null
+                },
+                onScrubCancel = { scrubbingPositionMs = null }
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = formatDurationMs(displayedPositionMs),
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = 11.sp,
+                        fontFeatureSettings = "tnum"
+                    ),
+                    color = Color.White.copy(alpha = 0.55f)
+                )
+                Text(
+                    text = formatDurationMs(rawDurationMs),
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = 11.sp,
+                        fontFeatureSettings = "tnum"
+                    ),
+                    color = Color.White.copy(alpha = 0.55f)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Airy, balanced transport controls
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = onToggleShuffle,
+                    modifier = Modifier.size(44.dp)
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            imageVector = Icons.Rounded.Shuffle,
+                            contentDescription = stringResource(R.string.cd_shuffle),
+                            tint = if (playbackState.shuffleEnabled) {
+                                Color.White
+                            } else {
+                                Color.White.copy(alpha = 0.50f)
+                            },
+                            modifier = Modifier.size(21.dp)
+                        )
+                        if (playbackState.shuffleEnabled) {
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Box(
+                                modifier = Modifier
+                                    .size(4.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.White)
+                            )
+                        }
+                    }
+                }
+
+                IconButton(
+                    onClick = effectivePrevious,
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.SkipPrevious,
+                        contentDescription = stringResource(R.string.cd_previous),
+                        tint = Color.White,
+                        modifier = Modifier.size(30.dp)
+                    )
+                }
+
+                FilledIconButton(
+                    onClick = effectiveTogglePlayPause,
+                    shape = CircleShape,
+                    colors = IconButtonDefaults.filledIconButtonColors(
+                        containerColor = Color.White,
+                        contentColor = BackdropBase
+                    ),
+                    modifier = Modifier.size(56.dp)
+                ) {
+                    if (effectiveIsBuffering) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(22.dp),
+                            strokeWidth = 2.5.dp,
+                            color = BackdropBase
+                        )
+                    } else {
+                        Icon(
+                            imageVector = if (effectiveIsPlaying) {
+                                Icons.Rounded.Pause
+                            } else {
+                                Icons.Rounded.PlayArrow
+                            },
+                            contentDescription = stringResource(
+                                if (effectiveIsPlaying) R.string.cd_pause else R.string.cd_play
+                            ),
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                }
+
+                IconButton(
+                    onClick = effectiveNext,
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.SkipNext,
+                        contentDescription = stringResource(R.string.cd_next),
+                        tint = Color.White,
+                        modifier = Modifier.size(30.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+        }
+    }
+}
+
+@Composable
+private fun MinimalScrubber(
+    progress: Float,
+    durationMs: Long,
+    onScrub: (Long) -> Unit,
+    onScrubEnd: (Long) -> Unit,
+    onScrubCancel: () -> Unit
+) {
+    val pillShape = RoundedCornerShape(999.dp)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(26.dp)
+            .pointerInput(durationMs) {
+                detectTapGestures { offset ->
+                    val fraction = (offset.x / size.width.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f)
+                    onScrubEnd((fraction * durationMs).toLong())
+                }
+            }
+            .pointerInput(durationMs) {
+                var lastScrubMs = 0L
+                detectHorizontalDragGestures(
+                    onDragStart = { offset ->
+                        val fraction = (offset.x / size.width.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f)
+                        lastScrubMs = (fraction * durationMs).toLong()
+                        onScrub(lastScrubMs)
+                    },
+                    onHorizontalDrag = { change, _ ->
+                        change.consume()
+                        val fraction = (change.position.x / size.width.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f)
+                        lastScrubMs = (fraction * durationMs).toLong()
+                        onScrub(lastScrubMs)
+                    },
+                    onDragEnd = { onScrubEnd(lastScrubMs) },
+                    onDragCancel = onScrubCancel
+                )
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(4.dp)
+                .clip(pillShape)
+                .background(Color.White.copy(alpha = 0.18f))
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .fillMaxWidth(progress.coerceIn(0f, 1f))
+                    .clip(pillShape)
+                    .background(Color.White)
+            )
+        }
+    }
+}
+
+@Composable
+private fun NowPlayingLyricsView(
+    lyrics: SyncedLyrics?,
+    positionMs: Long,
+    isLoading: Boolean,
+    onSeekTo: (Long) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val fadeMaskModifier = modifier
+        .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+        .drawWithContent {
+            drawContent()
+            drawRect(
+                brush = Brush.verticalGradient(
+                    0.0f to Color.Transparent,
+                    0.12f to Color.Black,
+                    0.88f to Color.Black,
+                    1.0f to Color.Transparent
+                ),
+                blendMode = BlendMode.DstIn
+            )
+        }
+
+    when {
+        isLoading && lyrics == null -> {
+            Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = Color.White.copy(alpha = 0.72f))
+            }
+        }
+        lyrics == null -> {
+            Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    text = "No lyrics available",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color.White.copy(alpha = 0.45f)
+                )
+            }
+        }
+        lyrics.isInstrumental -> {
+            Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    text = "Instrumental",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = Color.White.copy(alpha = 0.72f)
+                )
+            }
+        }
+        lyrics.isSynced && lyrics.lines.isNotEmpty() -> {
+            val activeIndex = lyrics.findActiveLineIndex(positionMs)
+            val listState = rememberLazyListState()
+
+            LaunchedEffect(activeIndex) {
+                if (activeIndex >= 0) {
+                    val target = (activeIndex - 2).coerceAtLeast(0)
+                    listState.animateScrollToItem(target)
+                }
+            }
+
+            LazyColumn(
+                state = listState,
+                modifier = fadeMaskModifier.fillMaxSize(),
+                contentPadding = PaddingValues(vertical = 44.dp, horizontal = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(18.dp)
+            ) {
+                itemsIndexed(
+                    items = lyrics.lines,
+                    key = { index, line -> "${index}_${line.startMs}" }
+                ) { index, line ->
+                    NowPlayingLyricLineRow(
+                        line = line,
+                        isActive = index == activeIndex,
+                        onClick = { onSeekTo(line.startMs) }
+                    )
+                }
+            }
+        }
+        !lyrics.plainText.isNullOrBlank() -> {
+            Column(
+                modifier = fadeMaskModifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 8.dp, vertical = 36.dp)
+            ) {
+                Text(
+                    text = lyrics.plainText.orEmpty(),
+                    style = MaterialTheme.typography.headlineSmall.copy(
+                        fontSize = 20.sp,
+                        lineHeight = 30.sp,
+                        fontWeight = FontWeight.Medium
+                    ),
+                    color = Color.White.copy(alpha = 0.78f)
+                )
+            }
+        }
+        else -> {
+            Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    text = "No lyrics available",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color.White.copy(alpha = 0.45f),
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun NowPlayingLyricLineRow(
+    line: LyricLine,
+    isActive: Boolean,
+    onClick: () -> Unit
+) {
+    val textColor by animateColorAsState(
+        targetValue = if (isActive) Color.White else Color.White.copy(alpha = 0.28f),
+        animationSpec = tween(durationMillis = 200),
+        label = "lyricLineColor"
+    )
+
+    val displayText = if (line.isInstrumental && line.text.isBlank()) {
+        "• • •"
+    } else {
+        line.text
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 6.dp, vertical = 4.dp)
+    ) {
+        Text(
+            text = displayText,
+            style = MaterialTheme.typography.headlineMedium.copy(
+                fontSize = 22.sp,
+                lineHeight = 30.sp,
+                fontWeight = if (isActive) FontWeight.Bold else FontWeight.SemiBold
+            ),
+            color = textColor
+        )
+        if (!line.subtitle.isNullOrBlank()) {
+            Text(
+                text = line.subtitle.orEmpty(),
+                style = MaterialTheme.typography.bodyMedium,
+                color = textColor.copy(alpha = 0.75f),
+                modifier = Modifier.padding(top = 3.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun LanConnectPill(
+    deviceName: String,
+    actionLabel: String?,
+    onAction: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(999.dp),
+        color = Color.White.copy(alpha = 0.08f)
+    ) {
+        Row(
+            modifier = Modifier.padding(
+                start = 12.dp,
+                end = if (actionLabel != null) 6.dp else 12.dp,
+                top = 5.dp,
+                bottom = 5.dp
+            ),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Computer,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = 0.80f),
+                modifier = Modifier.size(14.dp)
+            )
+            Text(
+                text = deviceName,
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.White.copy(alpha = 0.72f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (actionLabel != null) {
+                Surface(
+                    shape = RoundedCornerShape(999.dp),
+                    color = Color.White.copy(alpha = 0.14f),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .clickable(onClick = onAction)
+                ) {
+                    Text(
+                        text = actionLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    )
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="liner_bg_canvas">#FF000000</color>
+    <color name="liner_bg_primary">#FF0A0A0A</color>
+    <color name="liner_accent_primary">#FFFF4D4D</color>
+</resources>
