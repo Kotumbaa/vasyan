@@ -30,7 +30,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.HorizontalDivider
+import `fun`.tryliner.android.R
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -117,9 +121,8 @@ private fun LinerAppContent(container: AppContainer) {
                             .background(
                                 Brush.verticalGradient(
                                     0.0f to Color.Transparent,
-                                    0.32f to LinerColors.AmbientBase.copy(alpha = 0.85f),
-                                    0.65f to LinerColors.AmbientBase,
-                                    1.0f to LinerColors.AmbientBase
+                                    0.40f to LinerColors.AmbientBase.copy(alpha = 0.45f),
+                                    1.0f to LinerColors.AmbientBase.copy(alpha = 0.78f)
                                 )
                             )
                             .navigationBarsPadding()
@@ -141,21 +144,23 @@ private fun LinerAppContent(container: AppContainer) {
                             )
                         }
 
+                        HorizontalDivider(thickness = 0.5.dp, color = LinerColors.BorderAlpha14)
                         NavigationBar(
-                            containerColor = Color(0xF20D0F14),
+                            containerColor = LinerColors.NavBarGlass,
                             contentColor = LinerColors.TextPrimary,
                             tonalElevation = 0.dp
                         ) {
                             val itemColors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = Color(0xFFFFFFFF),
-                                selectedTextColor = Color(0xFFFFFFFF),
-                                unselectedIconColor = Color.White.copy(alpha = 0.45f),
-                                unselectedTextColor = Color.White.copy(alpha = 0.45f),
+                                selectedIconColor = LinerColors.TextPrimary,
+                                selectedTextColor = LinerColors.TextPrimary,
+                                unselectedIconColor = LinerColors.TextTertiary,
+                                unselectedTextColor = LinerColors.TextTertiary,
                                 indicatorColor = Color.Transparent
                             )
 
+                            val isHome = currentRoute == LinerRoutes.HOME
                             NavigationBarItem(
-                                selected = currentRoute == LinerRoutes.HOME,
+                                selected = isHome,
                                 onClick = {
                                     navController.navigate(LinerRoutes.HOME) {
                                         popUpTo(navController.graph.findStartDestination().id) {
@@ -167,16 +172,20 @@ private fun LinerAppContent(container: AppContainer) {
                                 },
                                 icon = {
                                     Icon(
-                                        imageVector = Icons.Rounded.Home,
-                                        contentDescription = "Home"
+                                        painter = painterResource(
+                                            if (isHome) R.drawable.ic_mgc_home_fill else R.drawable.ic_mgc_home_line
+                                        ),
+                                        contentDescription = "Home",
+                                        modifier = Modifier.size(22.dp)
                                     )
                                 },
                                 label = { Text("Home") },
                                 colors = itemColors
                             )
 
+                            val isSearch = currentRoute == LinerRoutes.SEARCH
                             NavigationBarItem(
-                                selected = currentRoute == LinerRoutes.SEARCH,
+                                selected = isSearch,
                                 onClick = {
                                     navController.navigate(LinerRoutes.SEARCH) {
                                         popUpTo(navController.graph.findStartDestination().id) {
@@ -188,17 +197,21 @@ private fun LinerAppContent(container: AppContainer) {
                                 },
                                 icon = {
                                     Icon(
-                                        imageVector = Icons.Rounded.Search,
-                                        contentDescription = "Search"
+                                        painter = painterResource(
+                                            if (isSearch) R.drawable.ic_mgc_search_fill else R.drawable.ic_mgc_search_line
+                                        ),
+                                        contentDescription = "Search",
+                                        modifier = Modifier.size(22.dp)
                                     )
                                 },
                                 label = { Text("Search") },
                                 colors = itemColors
                             )
 
+                            val isLibrary = currentRoute == LinerRoutes.LIBRARY ||
+                                currentRoute?.startsWith("playlist/") == true
                             NavigationBarItem(
-                                selected = currentRoute == LinerRoutes.LIBRARY ||
-                                    currentRoute?.startsWith("playlist/") == true,
+                                selected = isLibrary,
                                 onClick = {
                                     navController.navigate(LinerRoutes.LIBRARY) {
                                         popUpTo(navController.graph.findStartDestination().id) {
@@ -210,8 +223,11 @@ private fun LinerAppContent(container: AppContainer) {
                                 },
                                 icon = {
                                     Icon(
-                                        imageVector = Icons.Rounded.LibraryMusic,
-                                        contentDescription = "Library"
+                                        painter = painterResource(
+                                            if (isLibrary) R.drawable.ic_mgc_library_fill else R.drawable.ic_mgc_library_line
+                                        ),
+                                        contentDescription = "Library",
+                                        modifier = Modifier.size(22.dp)
                                     )
                                 },
                                 label = { Text("Library") },

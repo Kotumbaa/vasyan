@@ -43,6 +43,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -58,6 +59,7 @@ import `fun`.tryliner.android.ui.components.LocalTrackDownloads
 import `fun`.tryliner.android.ui.components.TrackRow
 import `fun`.tryliner.android.ui.components.formatDurationMs
 import `fun`.tryliner.android.ui.theme.LinerColors
+import `fun`.tryliner.android.ui.theme.LinerShapes
 import kotlin.math.abs
 
 private val PlaylistBackdropTarget = Color(0xFF0D0F14)
@@ -125,7 +127,7 @@ fun PlaylistDetailScreen(
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                            painter = painterResource(R.drawable.ic_mgc_arrow_left_line),
                             contentDescription = stringResource(R.string.cd_back),
                             tint = Color.White,
                             modifier = Modifier.size(20.dp)
@@ -234,7 +236,7 @@ private fun EntityHeroHeader(
     onPlayAll: () -> Unit,
     onShuffle: () -> Unit
 ) {
-    val coverShape = RoundedCornerShape(14.dp)
+    val coverShape = LinerShapes.HeroCover
 
     Column(
         modifier = Modifier
@@ -314,7 +316,7 @@ private fun EntityHeroHeader(
             Button(
                 onClick = onPlayAll,
                 enabled = state.tracks.isNotEmpty(),
-                shape = CircleShape,
+                shape = LinerShapes.HeroButton,
                 elevation = ButtonDefaults.buttonElevation(
                     defaultElevation = 0.dp,
                     pressedElevation = 0.dp,
@@ -324,17 +326,17 @@ private fun EntityHeroHeader(
                 ),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color.White,
-                    contentColor = PlaylistBackdropTarget,
+                    contentColor = LinerColors.BtnPrimaryText,
                     disabledContainerColor = Color.White.copy(alpha = 0.25f),
-                    disabledContentColor = PlaylistBackdropTarget.copy(alpha = 0.6f)
+                    disabledContentColor = LinerColors.BtnPrimaryText.copy(alpha = 0.6f)
                 ),
-                contentPadding = PaddingValues(horizontal = 22.dp, vertical = 10.dp),
-                modifier = Modifier.height(42.dp)
+                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp),
+                modifier = Modifier.height(40.dp)
             ) {
                 Icon(
-                    imageVector = Icons.Rounded.PlayArrow,
+                    painter = painterResource(R.drawable.ic_solar_play),
                     contentDescription = null,
-                    modifier = Modifier.size(19.dp)
+                    modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
@@ -346,20 +348,20 @@ private fun EntityHeroHeader(
             Surface(
                 onClick = onShuffle,
                 enabled = state.tracks.isNotEmpty(),
-                shape = CircleShape,
-                color = Color.White.copy(alpha = 0.10f),
-                modifier = Modifier.size(42.dp)
+                shape = LinerShapes.HeroButton,
+                color = LinerColors.HeroGlass,
+                modifier = Modifier.size(40.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
-                        imageVector = Icons.Rounded.Shuffle,
+                        painter = painterResource(R.drawable.ic_solar_shuffle),
                         contentDescription = stringResource(R.string.cd_shuffle),
                         tint = if (state.tracks.isNotEmpty()) {
                             LinerColors.TextPrimary
                         } else {
                             LinerColors.TextTertiary
                         },
-                        modifier = Modifier.size(19.dp)
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
@@ -392,9 +394,9 @@ private fun PlaylistDownloadButton(
             }
         },
         enabled = tracks.isNotEmpty(),
-        shape = CircleShape,
-        color = Color.White.copy(alpha = 0.10f),
-        modifier = Modifier.size(42.dp)
+        shape = LinerShapes.HeroButton,
+        color = LinerColors.HeroGlass,
+        modifier = Modifier.size(40.dp)
     ) {
         Box(contentAlignment = Alignment.Center) {
             when {
@@ -416,27 +418,27 @@ private fun PlaylistDownloadButton(
                         )
                     }
                     Icon(
-                        imageVector = Icons.Rounded.Close,
+                        painter = painterResource(R.drawable.ic_mgc_close_line),
                         contentDescription = "Отменить загрузку плейлиста",
                         tint = Color.White.copy(alpha = 0.75f),
                         modifier = Modifier.size(11.dp)
                     )
                 }
                 allDownloaded -> Icon(
-                    imageVector = Icons.Rounded.DownloadDone,
+                    painter = painterResource(R.drawable.ic_mgc_check_line),
                     contentDescription = "Плейлист скачан",
                     tint = LinerColors.AccentPrimary,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(19.dp)
                 )
                 else -> Icon(
-                    imageVector = Icons.Rounded.Download,
+                    painter = painterResource(R.drawable.ic_mgc_download_line),
                     contentDescription = "Скачать весь плейлист",
                     tint = if (tracks.isNotEmpty()) {
                         LinerColors.TextPrimary
                     } else {
                         LinerColors.TextTertiary
                     },
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(19.dp)
                 )
             }
         }

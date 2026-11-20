@@ -38,10 +38,13 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil3.compose.SubcomposeAsyncImage
+import `fun`.tryliner.android.R
 import `fun`.tryliner.android.ui.theme.LinerColors
 import `fun`.tryliner.android.ui.theme.LinerShapes
 import kotlin.math.max
@@ -59,11 +62,13 @@ fun AtmosphericBackdrop(
         animationSpec = tween(durationMillis = 650),
         label = "atmosphericBackdropTint"
     )
+    // Desktop PageCoverBackdrop samples cover color at FILL_DARKEN=0.38 across the entire viewport
+    val fullScreenBase = lerp(LinerColors.AmbientBase, animatedTint, 0.52f)
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(LinerColors.AmbientBase)
+            .background(fullScreenBase)
     ) {
         val blurredBitmap = coverAmbient?.blurredBitmap
         if (blurredBitmap != null) {
@@ -73,7 +78,7 @@ fun AtmosphericBackdrop(
                 label = "atmosphericCoverBlur"
             ) { bitmap ->
                 val blurModifier = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    Modifier.blur(48.dp, edgeTreatment = BlurredEdgeTreatment.Rectangle)
+                    Modifier.blur(56.dp, edgeTreatment = BlurredEdgeTreatment.Rectangle)
                 } else {
                     Modifier
                 }
@@ -84,7 +89,7 @@ fun AtmosphericBackdrop(
                     filterQuality = FilterQuality.High,
                     modifier = Modifier
                         .fillMaxSize()
-                        .alpha(0.24f)
+                        .alpha(0.36f)
                         .then(blurModifier)
                 )
             }
@@ -94,40 +99,53 @@ fun AtmosphericBackdrop(
             modifier = Modifier
                 .fillMaxSize()
                 .drawBehind {
-                    val verticalEnd = size.height * 0.56f
+                    // Full-screen smooth gradient from top to bottom (matching desktop full-window backdrop)
                     drawRect(
                         brush = Brush.verticalGradient(
-                            0.0f to animatedTint.copy(alpha = 0.72f),
-                            0.30f to animatedTint.copy(alpha = 0.28f),
-                            0.56f to LinerColors.AmbientBase.copy(alpha = 0.96f),
-                            1.0f to LinerColors.AmbientBase,
+                            0.00f to animatedTint.copy(alpha = 0.56f),
+                            0.35f to animatedTint.copy(alpha = 0.36f),
+                            0.70f to fullScreenBase.copy(alpha = 0.72f),
+                            1.00f to fullScreenBase.copy(alpha = 0.90f),
                             startY = 0f,
-                            endY = verticalEnd
+                            endY = size.height
                         )
                     )
 
-                    val primaryRadius = max(size.width, size.height) * 0.70f
+                    val maxDim = max(size.width, size.height)
+                    // Primary top-left ambient glow
                     drawRect(
                         brush = Brush.radialGradient(
                             colors = listOf(
-                                animatedTint.copy(alpha = 0.42f),
-                                animatedTint.copy(alpha = 0.12f),
+                                animatedTint.copy(alpha = 0.44f),
+                                animatedTint.copy(alpha = 0.14f),
                                 Color.Transparent
                             ),
-                            center = Offset(size.width * 0.25f, size.height * 0.06f),
-                            radius = primaryRadius
+                            center = Offset(size.width * 0.22f, size.height * 0.08f),
+                            radius = maxDim * 0.85f
                         )
                     )
 
-                    val secondaryRadius = max(size.width, size.height) * 0.52f
+                    // Secondary mid-right ambient glow
                     drawRect(
                         brush = Brush.radialGradient(
                             colors = listOf(
-                                animatedTint.copy(alpha = 0.22f),
+                                animatedTint.copy(alpha = 0.28f),
                                 Color.Transparent
                             ),
-                            center = Offset(size.width * 0.88f, size.height * 0.12f),
-                            radius = secondaryRadius
+                            center = Offset(size.width * 0.88f, size.height * 0.38f),
+                            radius = maxDim * 0.72f
+                        )
+                    )
+
+                    // Lower-left subtle ambient glow so bottom half keeps rich gradient depth
+                    drawRect(
+                        brush = Brush.radialGradient(
+                            colors = listOf(
+                                animatedTint.copy(alpha = 0.24f),
+                                Color.Transparent
+                            ),
+                            center = Offset(size.width * 0.18f, size.height * 0.84f),
+                            radius = maxDim * 0.78f
                         )
                     )
                 },
@@ -249,9 +267,9 @@ fun LikedTracksArtwork(
         contentAlignment = Alignment.Center
     ) {
         Icon(
-            imageVector = Icons.Rounded.Favorite,
+            painter = painterResource(R.drawable.ic_mgc_heart_fill),
             contentDescription = null,
-            tint = Color.White.copy(alpha = 0.85f),
+            tint = Color.White.copy(alpha = 0.70f),
             modifier = Modifier.size(size * 0.42f)
         )
     }
@@ -266,7 +284,7 @@ private fun CoverPlaceholder() {
         contentAlignment = Alignment.Center
     ) {
         Icon(
-            imageVector = Icons.Rounded.MusicNote,
+            painter = painterResource(R.drawable.ic_mgc_music_fill),
             contentDescription = null,
             tint = LinerColors.TextTertiary,
             modifier = Modifier.size(20.dp)

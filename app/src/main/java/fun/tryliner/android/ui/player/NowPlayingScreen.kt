@@ -79,6 +79,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -224,32 +225,32 @@ fun NowPlayingScreen(
             }
         }
 
-        // Deep desaturated ambient gradient spanning 55% height and fading smoothly into #0D0F14
+        // Full-screen ambient gradient matching desktop Kawarp / PageCoverBackdrop depth
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
-                        0.0f to topColor.copy(alpha = 0.82f),
-                        0.28f to midColor.copy(alpha = 0.65f),
-                        0.55f to BackdropBase.copy(alpha = 0.94f),
-                        1.0f to BackdropBase
+                        0.0f to topColor.copy(alpha = 0.86f),
+                        0.40f to midColor.copy(alpha = 0.70f),
+                        0.76f to BackdropBase.copy(alpha = 0.82f),
+                        1.0f to BackdropBase.copy(alpha = 0.94f)
                     )
                 )
         )
 
-        // Subtle radial aura behind the upper stage
+        // Full-screen subtle radial aura
         Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(0.55f)
+                .fillMaxSize()
                 .background(
                     Brush.radialGradient(
                         colors = listOf(
-                            topColor.copy(alpha = 0.28f),
+                            topColor.copy(alpha = 0.32f),
+                            midColor.copy(alpha = 0.14f),
                             Color.Transparent
                         ),
-                        radius = 900f
+                        radius = 1400f
                     )
                 )
         )
@@ -275,7 +276,7 @@ fun NowPlayingScreen(
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
-                            imageVector = Icons.Rounded.KeyboardArrowDown,
+                            painter = painterResource(R.drawable.ic_mgc_down_line),
                             contentDescription = stringResource(R.string.cd_back),
                             tint = Color.White,
                             modifier = Modifier.size(22.dp)
@@ -466,15 +467,13 @@ fun NowPlayingScreen(
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
-                                imageVector = if (isLiked) {
-                                    Icons.Rounded.Favorite
-                                } else {
-                                    Icons.Rounded.FavoriteBorder
-                                },
+                                painter = painterResource(
+                                    if (isLiked) R.drawable.ic_mgc_heart_fill else R.drawable.ic_mgc_heart_line
+                                ),
                                 contentDescription = stringResource(
                                     if (isLiked) R.string.cd_unlike else R.string.cd_like
                                 ),
-                                tint = if (isLiked) Color.White else Color.White.copy(alpha = 0.75f),
+                                tint = if (isLiked) LinerColors.AccentRed else Color.White.copy(alpha = 0.75f),
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -544,7 +543,7 @@ fun NowPlayingScreen(
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(
-                            imageVector = Icons.Rounded.Shuffle,
+                            painter = painterResource(R.drawable.ic_solar_shuffle),
                             contentDescription = stringResource(R.string.cd_shuffle),
                             tint = if (playbackState.shuffleEnabled) {
                                 Color.White
@@ -570,10 +569,10 @@ fun NowPlayingScreen(
                     modifier = Modifier.size(48.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Rounded.SkipPrevious,
+                        painter = painterResource(R.drawable.ic_solar_skip_prev),
                         contentDescription = stringResource(R.string.cd_previous),
                         tint = Color.White,
-                        modifier = Modifier.size(30.dp)
+                        modifier = Modifier.size(28.dp)
                     )
                 }
 
@@ -594,15 +593,13 @@ fun NowPlayingScreen(
                         )
                     } else {
                         Icon(
-                            imageVector = if (effectiveIsPlaying) {
-                                Icons.Rounded.Pause
-                            } else {
-                                Icons.Rounded.PlayArrow
-                            },
+                            painter = painterResource(
+                                if (effectiveIsPlaying) R.drawable.ic_solar_pause else R.drawable.ic_solar_play
+                            ),
                             contentDescription = stringResource(
                                 if (effectiveIsPlaying) R.string.cd_pause else R.string.cd_play
                             ),
-                            modifier = Modifier.size(28.dp)
+                            modifier = Modifier.size(26.dp)
                         )
                     }
                 }
@@ -612,10 +609,10 @@ fun NowPlayingScreen(
                     modifier = Modifier.size(48.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Rounded.SkipNext,
+                        painter = painterResource(R.drawable.ic_solar_skip_next),
                         contentDescription = stringResource(R.string.cd_next),
                         tint = Color.White,
-                        modifier = Modifier.size(30.dp)
+                        modifier = Modifier.size(28.dp)
                     )
                 }
             }

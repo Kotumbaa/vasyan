@@ -50,6 +50,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -113,12 +114,12 @@ fun LibraryScreen(
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 GlassCircleIconButton(
-                    icon = Icons.Rounded.Refresh,
+                    iconRes = R.drawable.ic_mgc_refresh_line,
                     contentDescription = "Refresh",
                     onClick = viewModel::refresh
                 )
                 GlassCircleIconButton(
-                    icon = Icons.AutoMirrored.Rounded.Logout,
+                    iconRes = R.drawable.ic_mgc_exit_line,
                     contentDescription = "Sign out",
                     onClick = viewModel::logout
                 )
@@ -322,7 +323,7 @@ fun LibraryScreen(
                                 Row {
                                     IconButton(onClick = { viewModel.playDownloaded(0, shuffle = true) }) {
                                         Icon(
-                                            imageVector = Icons.Rounded.Shuffle,
+                                            painter = painterResource(R.drawable.ic_solar_shuffle),
                                             contentDescription = "Перемешать",
                                             tint = Color.White.copy(alpha = 0.8f),
                                             modifier = Modifier.size(20.dp)
@@ -330,10 +331,10 @@ fun LibraryScreen(
                                     }
                                     IconButton(onClick = { viewModel.playDownloaded(0) }) {
                                         Icon(
-                                            imageVector = Icons.Rounded.PlayArrow,
+                                            painter = painterResource(R.drawable.ic_solar_play),
                                             contentDescription = "Слушать",
                                             tint = Color.White.copy(alpha = 0.8f),
-                                            modifier = Modifier.size(22.dp)
+                                            modifier = Modifier.size(18.dp)
                                         )
                                     }
                                 }
@@ -453,21 +454,21 @@ fun LibraryScreen(
 
 @Composable
 private fun GlassCircleIconButton(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    iconRes: Int,
     contentDescription: String,
     onClick: () -> Unit
 ) {
     Surface(
         onClick = onClick,
         shape = CircleShape,
-        color = Color.White.copy(alpha = 0.08f),
+        color = LinerColors.HeroGlass,
         modifier = Modifier.size(36.dp)
     ) {
         Box(contentAlignment = Alignment.Center) {
             Icon(
-                imageVector = icon,
+                painter = painterResource(iconRes),
                 contentDescription = contentDescription,
-                tint = Color.White.copy(alpha = 0.80f),
+                tint = Color.White.copy(alpha = 0.85f),
                 modifier = Modifier.size(18.dp)
             )
         }
@@ -480,8 +481,8 @@ private fun NewPlaylistPillButton(
 ) {
     Surface(
         onClick = onClick,
-        shape = CircleShape,
-        color = Color.White.copy(alpha = 0.10f)
+        shape = LinerShapes.HeroButton,
+        color = LinerColors.HeroGlass
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
@@ -489,7 +490,7 @@ private fun NewPlaylistPillButton(
             horizontalArrangement = Arrangement.spacedBy(5.dp)
         ) {
             Icon(
-                imageVector = Icons.Rounded.Add,
+                painter = painterResource(R.drawable.ic_mgc_add_line),
                 contentDescription = null,
                 tint = LinerColors.TextPrimary,
                 modifier = Modifier.size(16.dp)

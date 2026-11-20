@@ -2,6 +2,7 @@ package `fun`.tryliner.android.ui.player
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -40,6 +41,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -50,9 +52,10 @@ import `fun`.tryliner.android.playback.RemotePlaybackState
 import `fun`.tryliner.android.ui.components.LinerCoverArt
 import `fun`.tryliner.android.ui.components.rememberCoverAmbient
 import `fun`.tryliner.android.ui.theme.LinerColors
+import `fun`.tryliner.android.ui.theme.LinerShapes
 
-private val MiniPlayerShape = RoundedCornerShape(14.dp)
-private val MiniPlayerUnplayedBg = Color(0xE014161C)
+private val MiniPlayerShape = LinerShapes.Floating
+private val MiniPlayerUnplayedBg = LinerColors.MiniPlayerGlass
 
 @Composable
 fun MiniPlayerBar(
@@ -133,7 +136,8 @@ fun MiniPlayerBar(
             .clip(MiniPlayerShape)
             .clickable(onClick = onClick),
         shape = MiniPlayerShape,
-        color = MiniPlayerUnplayedBg
+        color = MiniPlayerUnplayedBg,
+        border = BorderStroke(0.5.dp, LinerColors.BorderAlpha14)
     ) {
         Column(
             modifier = Modifier
@@ -241,9 +245,11 @@ fun MiniPlayerBar(
                         modifier = Modifier.size(34.dp)
                     ) {
                         Icon(
-                            imageVector = if (isLiked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                            painter = painterResource(
+                                if (isLiked) R.drawable.ic_mgc_heart_fill else R.drawable.ic_mgc_heart_line
+                            ),
                             contentDescription = stringResource(if (isLiked) R.string.cd_unlike else R.string.cd_like),
-                            tint = if (isLiked) Color.White.copy(alpha = 0.90f) else Color.White.copy(alpha = 0.45f),
+                            tint = if (isLiked) LinerColors.AccentRed else LinerColors.TextTertiary,
                             modifier = Modifier.size(18.dp)
                         )
                     }
@@ -254,10 +260,10 @@ fun MiniPlayerBar(
                     modifier = Modifier.size(32.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Rounded.SkipPrevious,
+                        painter = painterResource(R.drawable.ic_solar_skip_prev),
                         contentDescription = stringResource(R.string.cd_previous),
                         tint = LinerColors.TextSecondary,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(18.dp)
                     )
                 }
 
@@ -279,16 +285,14 @@ fun MiniPlayerBar(
                         )
                     } else {
                         Icon(
-                            imageVector = if (isPlaying) {
-                                Icons.Rounded.Pause
-                            } else {
-                                Icons.Rounded.PlayArrow
-                            },
+                            painter = painterResource(
+                                if (isPlaying) R.drawable.ic_solar_pause else R.drawable.ic_solar_play
+                            ),
                             contentDescription = stringResource(
                                 if (isPlaying) R.string.cd_pause else R.string.cd_play
                             ),
                             tint = LinerColors.AmbientBase,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(17.dp)
                         )
                     }
                 }
@@ -300,10 +304,10 @@ fun MiniPlayerBar(
                     modifier = Modifier.size(32.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Rounded.SkipNext,
+                        painter = painterResource(R.drawable.ic_solar_skip_next),
                         contentDescription = stringResource(R.string.cd_next),
                         tint = LinerColors.TextSecondary,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }

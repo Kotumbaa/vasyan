@@ -41,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -49,6 +50,7 @@ import androidx.compose.ui.unit.sp
 import `fun`.tryliner.android.R
 import `fun`.tryliner.android.core.model.Track
 import `fun`.tryliner.android.ui.theme.LinerColors
+import `fun`.tryliner.android.ui.theme.LinerShapes
 
 @Composable
 fun TrackRow(
@@ -59,9 +61,9 @@ fun TrackRow(
     onToggleLike: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val rowShape = RoundedCornerShape(10.dp)
-    val coverShape = RoundedCornerShape(6.dp)
-    val rowBg = if (isPlayingCurrent) Color.White.copy(alpha = 0.07f) else Color.Transparent
+    val rowShape = LinerShapes.Item
+    val coverShape = LinerShapes.Tile
+    val rowBg = if (isPlayingCurrent) LinerColors.Fill else Color.Transparent
     val rowModifier = modifier
         .fillMaxWidth()
         .clip(rowShape)
@@ -159,9 +161,11 @@ fun TrackRow(
             modifier = Modifier.size(36.dp)
         ) {
             Icon(
-                imageVector = if (isLiked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                painter = painterResource(
+                    if (isLiked) R.drawable.ic_mgc_heart_fill else R.drawable.ic_mgc_heart_line
+                ),
                 contentDescription = stringResource(if (isLiked) R.string.cd_unlike else R.string.cd_like),
-                tint = if (isLiked) Color.White.copy(alpha = 0.90f) else Color.White.copy(alpha = 0.40f),
+                tint = if (isLiked) LinerColors.AccentRed else LinerColors.TextTertiary,
                 modifier = Modifier.size(19.dp)
             )
         }
@@ -211,28 +215,28 @@ fun DownloadButton(
                     )
                 }
                 Icon(
-                    imageVector = Icons.Rounded.Close,
+                    painter = painterResource(R.drawable.ic_mgc_close_line),
                     contentDescription = "Отменить загрузку",
                     tint = Color.White.copy(alpha = 0.7f),
                     modifier = Modifier.size(iconSize * 0.5f)
                 )
             }
             TrackDownloadState.Downloaded -> Icon(
-                imageVector = Icons.Rounded.DownloadDone,
+                painter = painterResource(R.drawable.ic_mgc_check_line),
                 contentDescription = "Скачано",
                 tint = LinerColors.AccentPrimary,
                 modifier = Modifier.size(iconSize)
             )
             is TrackDownloadState.Failed -> Icon(
-                imageVector = Icons.Rounded.ErrorOutline,
+                painter = painterResource(R.drawable.ic_mgc_warning_line),
                 contentDescription = "Ошибка загрузки, повторить",
-                tint = Color(0xFFFF6B6B),
+                tint = LinerColors.AccentRed,
                 modifier = Modifier.size(iconSize)
             )
             null -> Icon(
-                imageVector = Icons.Rounded.Download,
+                painter = painterResource(R.drawable.ic_mgc_download_line),
                 contentDescription = "Скачать",
-                tint = Color.White.copy(alpha = 0.40f),
+                tint = LinerColors.TextTertiary,
                 modifier = Modifier.size(iconSize)
             )
         }
