@@ -19,8 +19,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Shuffle
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -31,7 +35,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
@@ -45,8 +51,10 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import `fun`.tryliner.android.AppContainer
 import `fun`.tryliner.android.R
+import `fun`.tryliner.android.playback.TrackDownloadState
 import `fun`.tryliner.android.ui.components.LikedTracksArtwork
 import `fun`.tryliner.android.ui.components.LinerCoverArt
+import `fun`.tryliner.android.ui.components.LocalTrackDownloads
 import `fun`.tryliner.android.ui.components.TrackRow
 import `fun`.tryliner.android.ui.components.formatDurationMs
 import `fun`.tryliner.android.ui.theme.LinerColors
@@ -355,6 +363,99 @@ private fun EntityHeroHeader(
                     )
                 }
             }
+
+            PlaylistDownloadButton(tracks = state.tracks)
         }
+    }
+}
+
+@Composable
+private fun PlaylistDownloadButton(
+    tracks: List<`fun`.tryliner.android.core.model.Track>,
+) {
+    val manager = LocalTrackDownloads.current ?: return
+    val states by manager.states.collectAsStateWithLifecycle()
+    var confirmDeleteAll by remember { mutableStateOf(false) }
+
+    val downloadedCount = tracks.count { states[it.id] == TrackDownloadState.Downloaded }
+    val anyDownloading = tracks.any { states[it.id] is TrackDownloadState.Downloading }
+    val allDownloaded = tracks.isNotEmpty() && downloadedCount == tracks.size
+
+    Surface(
+        onClick = {
+            when {
+                anyDownloading -> tracks.forEach {
+                    if (states[it.id] is TrackDownloadState.Downloading) manager.cancel(it.id)
+                }
+                allDownloaded -> confirmDeleteAll = true
+                else -> manager.downloadAll(tracks)
+            }
+        },
+        enabled = tracks.isNotEmpty(),
+        shape = CircleShape,
+        color = Color.White.copy(alpha = 0.10f),
+        modifier = Modifier.size(42.dp)
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            when {
+                anyDownloading -> {
+                    val progress = if (tracks.isNotEmpty()) downloadedCount.toFloat() / tracks.size else 0f
+                    if (progress <= 0f) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                            color = LinerColors.TextPrimary
+                        )
+                    } else {
+                        CircularProgressIndicator(
+                            progress = { progress },
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                            color = LinerColors.TextPrimary,
+                            trackColor = Color.White.copy(alpha = 0.15f)
+                        )
+                    }
+                    Icon(
+                        imageVector = Icons.Rounded.Close,
+                        contentDescription = "Отменить загрузку плейлиста",
+                        tint = Color.White.copy(alpha = 0.75f),
+                        modifier = Modifier.size(11.dp)
+                    )
+                }
+                allDownloaded -> Icon(
+                    imageVector = Icons.Rounded.DownloadDone,
+                    contentDescription = "Плейлист скачан",
+                    tint = LinerColors.AccentPrimary,
+                    modifier = Modifier.size(20.dp)
+                )
+                else -> Icon(
+                    imageVector = Icons.Rounded.Download,
+                    contentDescription = "Скачать весь плейлист",
+                    tint = if (tracks.isNotEmpty()) {
+                        LinerColors.TextPrimary
+                    } else {
+                        LinerColors.TextTertiary
+                    },
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+    }
+
+    if (confirmDeleteAll) {
+        AlertDialog(
+            onDismissRequest = { confirmDeleteAll = false },
+            title = { Text("Удалить загрузки плейлиста?") },
+            text = { Text("Все скачанные треки из этого плейлиста (${tracks.size}) будут удалены с устройства.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDeleteAll = false
+                    tracks.forEach { manager.delete(it.id) }
+                }) { Text("Удалить") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDeleteAll = false }) { Text("Отмена") }
+            }
+        )
     }
 }

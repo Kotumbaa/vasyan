@@ -11,6 +11,7 @@ import java.io.RandomAccessFile
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +19,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -57,7 +59,7 @@ class TrackDownloadManager(
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = false }
     private val indexSerializer = ListSerializer(Track.serializer())
     private val indexMutex = Mutex()
-    private val downloadSemaphore = Semaphore(2)
+    private val downloadSemaphore = Semaphore(1)
     private val jobs = ConcurrentHashMap<String, Job>()
 
     private val httpClient = OkHttpClient.Builder()
@@ -101,27 +103,18 @@ class TrackDownloadManager(
     fun localUriFor(trackId: String): Uri? =
         audioFile(trackId).takeIf { it.exists() && it.length() > 0 }?.let { Uri.fromFile(it) }
 
+    fun downloadAll(tracks: List<Track>) {
+        tracks.forEach { download(it) }
+    }
+
     fun download(track: Track) {
         if (jobs[track.id]?.isActive == true || isDownloaded(track.id)) return
         setState(track.id, TrackDownloadState.Downloading(0f))
         val job = scope.launch(Dispatchers.IO) {
             try {
                 downloadSemaphore.withPermit {
-                    val stream = innertubeClient.resolveAudioStream(track.id)
                     val part = partFile(track.id)
-                    part.delete()
-                    try {
-                        downloadChunked(stream.url, stream.contentLength, part) { progress ->
-                            setState(track.id, TrackDownloadState.Downloading(progress))
-                        }
-                    } catch (chunkErr: IOException) {
-                        Log.w(TAG, "Chunked download failed for ${track.id}, falling back to plain GET: ${chunkErr.message}")
-                        part.delete()
-                        setState(track.id, TrackDownloadState.Downloading(0f))
-                        downloadPlain(stream.url, part) { progress ->
-                            setState(track.id, TrackDownloadState.Downloading(progress))
-                        }
-                    }
+                    downloadWithRetries(track, part)
                     val target = audioFile(track.id)
                     target.delete()
                     if (!part.renameTo(target)) throw IOException("Failed to finalize download")
@@ -145,6 +138,41 @@ class TrackDownloadManager(
             }
         }
         jobs[track.id] = job
+    }
+
+    private suspend fun downloadWithRetries(track: Track, part: File) {
+        var lastError: Throwable? = null
+        for (attempt in 1..MAX_TRACK_ATTEMPTS) {
+            coroutineContext.ensureActive()
+            if (attempt > 1) {
+                setState(track.id, TrackDownloadState.Downloading(0f))
+                delay(700L * attempt)
+            }
+            try {
+                val stream = innertubeClient.resolveAudioStream(track.id)
+                part.delete()
+                try {
+                    downloadChunked(stream.url, stream.contentLength, part) { progress ->
+                        setState(track.id, TrackDownloadState.Downloading(progress))
+                    }
+                } catch (chunkErr: IOException) {
+                    if (chunkErr is CancellationException) throw chunkErr
+                    Log.w(TAG, "Chunked download failed for ${track.id} (attempt $attempt), trying plain GET: ${chunkErr.message}")
+                    part.delete()
+                    setState(track.id, TrackDownloadState.Downloading(0f))
+                    downloadPlain(stream.url, part) { progress ->
+                        setState(track.id, TrackDownloadState.Downloading(progress))
+                    }
+                }
+                return
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                lastError = e
+                Log.w(TAG, "Attempt $attempt/$MAX_TRACK_ATTEMPTS failed for ${track.id}: ${e.message}")
+            }
+        }
+        throw lastError ?: IOException("Download failed")
     }
 
     fun cancel(trackId: String) {
@@ -276,5 +304,6 @@ class TrackDownloadManager(
         private const val TAG = "TrackDownloads"
         private const val CHUNK_SIZE = 512L * 1024L
         private const val CONCURRENCY = 4
+        private const val MAX_TRACK_ATTEMPTS = 3
     }
 }
