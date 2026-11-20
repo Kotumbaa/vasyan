@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -41,11 +42,13 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import `fun`.tryliner.android.R
 import `fun`.tryliner.android.playback.PlaybackUiState
 import `fun`.tryliner.android.playback.RemotePlaybackState
@@ -54,8 +57,8 @@ import `fun`.tryliner.android.ui.components.rememberCoverAmbient
 import `fun`.tryliner.android.ui.theme.LinerColors
 import `fun`.tryliner.android.ui.theme.LinerShapes
 
-private val MiniPlayerShape = LinerShapes.Floating
-private val MiniPlayerUnplayedBg = LinerColors.MiniPlayerGlass
+private val MiniPlayerShape = LinerShapes.Control
+private val MiniPlayerBaseBg = Color(0xFF28282E)
 
 @Composable
 fun MiniPlayerBar(
@@ -123,99 +126,37 @@ fun MiniPlayerBar(
     }
 
     val coverAmbient = rememberCoverAmbient(coverUrl)
-    val animatedFillTint by animateColorAsState(
-        targetValue = (coverAmbient?.accentColor ?: Color.White).copy(alpha = 0.22f),
+    val spotifyBarBg by animateColorAsState(
+        targetValue = lerp(
+            MiniPlayerBaseBg,
+            coverAmbient?.backdropColor ?: LinerColors.AmbientBlue,
+            0.82f
+        ),
         animationSpec = tween(durationMillis = 450),
-        label = "miniPlayerProgressTint"
+        label = "miniPlayerBg"
     )
 
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .padding(horizontal = 8.dp, vertical = 4.dp)
             .clip(MiniPlayerShape)
             .clickable(onClick = onClick),
         shape = MiniPlayerShape,
-        color = MiniPlayerUnplayedBg,
-        border = BorderStroke(0.5.dp, LinerColors.BorderAlpha14)
+        color = spotifyBarBg
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .drawDesktopProgressFill(progress = progress, fillColor = animatedFillTint)
-        ) {
-            if (activeRemote != null) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(Color.White.copy(alpha = 0.04f))
-                        .padding(start = 12.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Computer,
-                            contentDescription = null,
-                            tint = Color.White.copy(alpha = 0.75f),
-                            modifier = Modifier.size(13.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = if (activeRemote.isPlaying) {
-                                "Playing on ${activeRemote.deviceName}"
-                            } else {
-                                "Paused on ${activeRemote.deviceName}"
-                            },
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color.White.copy(alpha = 0.72f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    Row(
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.12f))
-                            .clickable(onClick = onPlayOnPhone)
-                            .padding(horizontal = 10.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Smartphone,
-                            contentDescription = null,
-                            tint = LinerColors.TextPrimary,
-                            modifier = Modifier.size(12.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "Play on Phone",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontWeight = FontWeight.Medium
-                            ),
-                            color = LinerColors.TextPrimary
-                        )
-                    }
-                }
-            }
-
+        Column(modifier = Modifier.fillMaxWidth()) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                    .padding(start = 8.dp, end = 6.dp, top = 8.dp, bottom = 7.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 LinerCoverArt(
                     url = coverUrl,
                     contentDescription = title,
-                    size = 42.dp,
-                    shape = RoundedCornerShape(8.dp)
+                    size = 40.dp,
+                    shape = LinerShapes.Tile
                 )
 
                 Spacer(modifier = Modifier.width(10.dp))
@@ -224,64 +165,80 @@ fun MiniPlayerBar(
                     Text(
                         text = title,
                         style = MaterialTheme.typography.labelLarge.copy(
+                            fontSize = 13.5.sp,
                             fontWeight = FontWeight.SemiBold
                         ),
-                        color = LinerColors.TextPrimary,
+                        color = Color.White,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    Text(
-                        text = artist,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = LinerColors.TextSecondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (activeRemote != null) {
+                            Icon(
+                                imageVector = Icons.Rounded.Computer,
+                                contentDescription = null,
+                                tint = Color(0xFF1ED760),
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = activeRemote.deviceName,
+                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                                color = Color(0xFF1ED760),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        } else {
+                            Text(
+                                text = artist,
+                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                                color = Color.White.copy(alpha = 0.72f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+
+                if (activeRemote != null) {
+                    IconButton(
+                        onClick = onPlayOnPhone,
+                        modifier = Modifier.size(34.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Smartphone,
+                            contentDescription = "Play on Phone",
+                            tint = Color.White.copy(alpha = 0.85f),
+                            modifier = Modifier.size(19.dp)
+                        )
+                    }
                 }
 
                 if (!showRemoteAsMain) {
                     IconButton(
                         onClick = onToggleLike,
-                        modifier = Modifier.size(34.dp)
+                        modifier = Modifier.size(36.dp)
                     ) {
                         Icon(
                             painter = painterResource(
                                 if (isLiked) R.drawable.ic_mgc_heart_fill else R.drawable.ic_mgc_heart_line
                             ),
                             contentDescription = stringResource(if (isLiked) R.string.cd_unlike else R.string.cd_like),
-                            tint = if (isLiked) LinerColors.AccentRed else LinerColors.TextTertiary,
-                            modifier = Modifier.size(18.dp)
+                            tint = if (isLiked) Color(0xFF1ED760) else Color.White.copy(alpha = 0.72f),
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }
 
                 IconButton(
-                    onClick = mainPrevious,
-                    modifier = Modifier.size(32.dp)
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_solar_skip_prev),
-                        contentDescription = stringResource(R.string.cd_previous),
-                        tint = LinerColors.TextSecondary,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(2.dp))
-
-                Box(
-                    modifier = Modifier
-                        .size(34.dp)
-                        .clip(CircleShape)
-                        .background(Color.White)
-                        .clickable(onClick = mainTogglePlayPause),
-                    contentAlignment = Alignment.Center
+                    onClick = mainTogglePlayPause,
+                    modifier = Modifier.size(40.dp)
                 ) {
                     if (isBuffering) {
                         CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
+                            modifier = Modifier.size(18.dp),
                             strokeWidth = 2.dp,
-                            color = LinerColors.AmbientBase
+                            color = Color.White
                         )
                     } else {
                         Icon(
@@ -291,25 +248,28 @@ fun MiniPlayerBar(
                             contentDescription = stringResource(
                                 if (isPlaying) R.string.cd_pause else R.string.cd_play
                             ),
-                            tint = LinerColors.AmbientBase,
-                            modifier = Modifier.size(17.dp)
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp)
                         )
                     }
                 }
+            }
 
-                Spacer(modifier = Modifier.width(2.dp))
-
-                IconButton(
-                    onClick = mainNext,
-                    modifier = Modifier.size(32.dp)
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_solar_skip_next),
-                        contentDescription = stringResource(R.string.cd_next),
-                        tint = LinerColors.TextSecondary,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
+            // Razor-thin Spotify progress line along bottom edge
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp)
+                    .height(2.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.22f))
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(progress)
+                        .height(2.dp)
+                        .background(Color.White)
+                )
             }
         }
     }

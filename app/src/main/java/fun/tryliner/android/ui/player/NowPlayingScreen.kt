@@ -8,6 +8,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -76,6 +77,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -262,82 +264,62 @@ fun NowPlayingScreen(
                 .navigationBarsPadding()
                 .padding(horizontal = 24.dp, vertical = 12.dp)
         ) {
-            // Top bar: borderless soft white@0.08f pills
+            // Spotify-style top bar: Chevron down | Centered source/album | Download
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Surface(
+                IconButton(
                     onClick = onCollapse,
-                    shape = RoundedCornerShape(999.dp),
-                    color = Color.White.copy(alpha = 0.08f),
-                    modifier = Modifier.size(38.dp)
+                    modifier = Modifier.size(40.dp)
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_mgc_down_line),
-                            contentDescription = stringResource(R.string.cd_back),
-                            tint = Color.White,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
+                    Icon(
+                        painter = painterResource(R.drawable.ic_mgc_down_line),
+                        contentDescription = stringResource(R.string.cd_back),
+                        tint = Color.White,
+                        modifier = Modifier.size(24.dp)
+                    )
                 }
 
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                Column(
+                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    if (showLyrics) {
-                        val providerLabel = playbackState.lyrics?.provider
-                            ?.takeIf { it.isNotBlank() }
-                            ?.lowercase()
-                            ?: "lrclib"
-                        Surface(
-                            shape = RoundedCornerShape(999.dp),
-                            color = Color.White.copy(alpha = 0.08f)
-                        ) {
-                            Text(
-                                text = providerLabel,
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Medium
-                                ),
-                                color = Color.White.copy(alpha = 0.72f),
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                            )
-                        }
-                    }
-
-                    Surface(
-                        onClick = { showLyrics = !showLyrics },
-                        shape = RoundedCornerShape(999.dp),
-                        color = if (showLyrics) {
-                            Color.White.copy(alpha = 0.16f)
+                    Text(
+                        text = if (isRemoteMode) "ИГРАЕТ НА ПК" else "СЕЙЧАС ИГРАЕТ",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontSize = 10.sp,
+                            letterSpacing = 0.8.sp,
+                            fontWeight = FontWeight.Medium
+                        ),
+                        color = Color.White.copy(alpha = 0.65f),
+                        maxLines = 1
+                    )
+                    Text(
+                        text = if (isRemoteMode) {
+                            remoteState?.deviceName ?: "Desktop"
                         } else {
-                            Color.White.copy(alpha = 0.08f)
-                        }
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Lyrics,
-                                contentDescription = stringResource(R.string.cd_lyrics),
-                                tint = if (showLyrics) Color.White else Color.White.copy(alpha = 0.72f),
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Text(
-                                text = "Lyrics",
-                                style = MaterialTheme.typography.labelMedium.copy(
-                                    fontWeight = if (showLyrics) FontWeight.SemiBold else FontWeight.Medium
-                                ),
-                                color = if (showLyrics) Color.White else Color.White.copy(alpha = 0.72f)
-                            )
-                        }
-                    }
+                            track?.album?.title?.takeIf { it.isNotBlank() } ?: "vasyan"
+                        },
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                if (track != null) {
+                    `fun`.tryliner.android.ui.components.DownloadButton(
+                        track = track,
+                        iconSize = 22.dp,
+                        buttonSize = 40.dp
+                    )
+                } else {
+                    Spacer(modifier = Modifier.size(40.dp))
                 }
             }
 
@@ -389,21 +371,21 @@ fun NowPlayingScreen(
                             modifier = Modifier.fillMaxSize(),
                             contentAlignment = Alignment.Center
                         ) {
-                            val coverShape = RoundedCornerShape(16.dp)
+                            val coverShape = RoundedCornerShape(10.dp)
                             LinerCoverArt(
                                 url = track?.cover?.url ?: track?.cover?.fallbackUrl,
                                 contentDescription = track?.title,
-                                size = 320.dp,
+                                size = 340.dp,
                                 shape = coverShape,
                                 modifier = Modifier
-                                    .fillMaxWidth(0.88f)
+                                    .fillMaxWidth(0.96f)
                                     .aspectRatio(1f)
                                     .shadow(
-                                        elevation = 28.dp,
+                                        elevation = 24.dp,
                                         shape = coverShape,
                                         clip = false,
-                                        ambientColor = Color.Black.copy(alpha = 0.65f),
-                                        spotColor = Color.Black.copy(alpha = 0.75f)
+                                        ambientColor = Color.Black.copy(alpha = 0.55f),
+                                        spotColor = Color.Black.copy(alpha = 0.65f)
                                     )
                             )
                         }
@@ -422,18 +404,18 @@ fun NowPlayingScreen(
                     Text(
                         text = track?.title ?: "Nothing playing",
                         style = MaterialTheme.typography.titleLarge.copy(
-                            fontSize = 21.sp,
+                            fontSize = 22.sp,
                             fontWeight = FontWeight.Bold
                         ),
                         color = Color.White,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    Spacer(modifier = Modifier.height(3.dp))
+                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = track?.artistNames?.ifBlank { "Unknown Artist" } ?: "",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White.copy(alpha = 0.65f),
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp),
+                        color = Color.White.copy(alpha = 0.70f),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -441,42 +423,20 @@ fun NowPlayingScreen(
 
                 if (track != null) {
                     Spacer(modifier = Modifier.width(8.dp))
-                    Surface(
-                        shape = RoundedCornerShape(999.dp),
-                        color = Color.White.copy(alpha = 0.08f),
-                        modifier = Modifier.size(40.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            `fun`.tryliner.android.ui.components.DownloadButton(
-                                track = track,
-                                iconSize = 20.dp,
-                                buttonSize = 40.dp
-                            )
-                        }
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Surface(
+                    IconButton(
                         onClick = onToggleLike,
-                        shape = RoundedCornerShape(999.dp),
-                        color = if (isLiked) {
-                            Color.White.copy(alpha = 0.14f)
-                        } else {
-                            Color.White.copy(alpha = 0.08f)
-                        },
                         modifier = Modifier.size(40.dp)
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                painter = painterResource(
-                                    if (isLiked) R.drawable.ic_mgc_heart_fill else R.drawable.ic_mgc_heart_line
-                                ),
-                                contentDescription = stringResource(
-                                    if (isLiked) R.string.cd_unlike else R.string.cd_like
-                                ),
-                                tint = if (isLiked) LinerColors.AccentRed else Color.White.copy(alpha = 0.75f),
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
+                        Icon(
+                            painter = painterResource(
+                                if (isLiked) R.drawable.ic_mgc_heart_fill else R.drawable.ic_mgc_heart_line
+                            ),
+                            contentDescription = stringResource(
+                                if (isLiked) R.string.cd_unlike else R.string.cd_like
+                            ),
+                            tint = if (isLiked) Color(0xFF1ED760) else Color.White.copy(alpha = 0.75f),
+                            modifier = Modifier.size(26.dp)
+                        )
                     }
                 }
             }
@@ -531,10 +491,10 @@ fun NowPlayingScreen(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Airy, balanced transport controls
+            // Spotify 5-slot transport controls: Shuffle | Prev | Big Play | Next | Lyrics
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(
@@ -546,11 +506,11 @@ fun NowPlayingScreen(
                             painter = painterResource(R.drawable.ic_solar_shuffle),
                             contentDescription = stringResource(R.string.cd_shuffle),
                             tint = if (playbackState.shuffleEnabled) {
-                                Color.White
+                                Color(0xFF1ED760)
                             } else {
-                                Color.White.copy(alpha = 0.50f)
+                                Color.White.copy(alpha = 0.65f)
                             },
-                            modifier = Modifier.size(21.dp)
+                            modifier = Modifier.size(22.dp)
                         )
                         if (playbackState.shuffleEnabled) {
                             Spacer(modifier = Modifier.height(2.dp))
@@ -558,7 +518,7 @@ fun NowPlayingScreen(
                                 modifier = Modifier
                                     .size(4.dp)
                                     .clip(CircleShape)
-                                    .background(Color.White)
+                                    .background(Color(0xFF1ED760))
                             )
                         }
                     }
@@ -572,7 +532,7 @@ fun NowPlayingScreen(
                         painter = painterResource(R.drawable.ic_solar_skip_prev),
                         contentDescription = stringResource(R.string.cd_previous),
                         tint = Color.White,
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier.size(32.dp)
                     )
                 }
 
@@ -583,11 +543,11 @@ fun NowPlayingScreen(
                         containerColor = Color.White,
                         contentColor = BackdropBase
                     ),
-                    modifier = Modifier.size(56.dp)
+                    modifier = Modifier.size(64.dp)
                 ) {
                     if (effectiveIsBuffering) {
                         CircularProgressIndicator(
-                            modifier = Modifier.size(22.dp),
+                            modifier = Modifier.size(24.dp),
                             strokeWidth = 2.5.dp,
                             color = BackdropBase
                         )
@@ -599,7 +559,7 @@ fun NowPlayingScreen(
                             contentDescription = stringResource(
                                 if (effectiveIsPlaying) R.string.cd_pause else R.string.cd_play
                             ),
-                            modifier = Modifier.size(26.dp)
+                            modifier = Modifier.size(28.dp)
                         )
                     }
                 }
@@ -612,12 +572,82 @@ fun NowPlayingScreen(
                         painter = painterResource(R.drawable.ic_solar_skip_next),
                         contentDescription = stringResource(R.string.cd_next),
                         tint = Color.White,
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier.size(32.dp)
                     )
+                }
+
+                IconButton(
+                    onClick = { showLyrics = !showLyrics },
+                    modifier = Modifier.size(44.dp)
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            imageVector = Icons.Rounded.Lyrics,
+                            contentDescription = stringResource(R.string.cd_lyrics),
+                            tint = if (showLyrics) Color(0xFF1ED760) else Color.White.copy(alpha = 0.65f),
+                            modifier = Modifier.size(22.dp)
+                        )
+                        if (showLyrics) {
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Box(
+                                modifier = Modifier
+                                    .size(4.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFF1ED760))
+                            )
+                        }
+                    }
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            if (!showLyrics) {
+                Spacer(modifier = Modifier.height(14.dp))
+                val previewCardBg = lerp(Color(0xFF1E1E24), topColor, 0.72f)
+                val activeLineText = remember(playbackState.lyrics, displayedPositionMs) {
+                    val lyr = playbackState.lyrics
+                    if (lyr != null && lyr.lines.isNotEmpty()) {
+                        val idx = lyr.findActiveLineIndex(displayedPositionMs).coerceAtLeast(0)
+                        lyr.lines.drop(idx).take(2).joinToString("\n") { it.text }
+                    } else if (!lyr?.plainText.isNullOrBlank()) {
+                        lyr?.plainText?.lines()?.take(2)?.joinToString("\n").orEmpty()
+                    } else if (playbackState.isLyricsLoading) {
+                        "Загрузка текста..."
+                    } else {
+                        "Нажмите, чтобы открыть текст"
+                    }
+                }
+                Surface(
+                    onClick = { showLyrics = true },
+                    shape = RoundedCornerShape(14.dp),
+                    color = previewCardBg,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
+                    ) {
+                        Text(
+                            text = "Предпросмотр текста",
+                            style = MaterialTheme.typography.labelLarge.copy(
+                                fontWeight = FontWeight.Bold
+                            ),
+                            color = Color.White
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = activeLineText,
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontWeight = FontWeight.Medium,
+                                lineHeight = 20.sp
+                            ),
+                            color = Color.White.copy(alpha = 0.88f),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            } else {
+                Spacer(modifier = Modifier.height(10.dp))
+            }
         }
     }
 }
@@ -661,19 +691,36 @@ private fun MinimalScrubber(
             },
         contentAlignment = Alignment.Center
     ) {
-        Box(
+        Canvas(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(4.dp)
-                .clip(pillShape)
-                .background(Color.White.copy(alpha = 0.18f))
+                .height(14.dp)
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .fillMaxWidth(progress.coerceIn(0f, 1f))
-                    .clip(pillShape)
-                    .background(Color.White)
+            val fraction = progress.coerceIn(0f, 1f)
+            val centerY = size.height / 2f
+            val trackHeight = 3.dp.toPx()
+            val thumbRadius = 5.5.dp.toPx()
+            val usableWidth = (size.width - thumbRadius * 2).coerceAtLeast(1f)
+            val thumbX = thumbRadius + usableWidth * fraction
+
+            drawLine(
+                color = Color.White.copy(alpha = 0.22f),
+                start = androidx.compose.ui.geometry.Offset(thumbRadius, centerY),
+                end = androidx.compose.ui.geometry.Offset(size.width - thumbRadius, centerY),
+                strokeWidth = trackHeight,
+                cap = androidx.compose.ui.graphics.StrokeCap.Round
+            )
+            drawLine(
+                color = Color.White,
+                start = androidx.compose.ui.geometry.Offset(thumbRadius, centerY),
+                end = androidx.compose.ui.geometry.Offset(thumbX, centerY),
+                strokeWidth = trackHeight,
+                cap = androidx.compose.ui.graphics.StrokeCap.Round
+            )
+            drawCircle(
+                color = Color.White,
+                radius = thumbRadius,
+                center = androidx.compose.ui.geometry.Offset(thumbX, centerY)
             )
         }
     }
