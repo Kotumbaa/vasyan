@@ -4,9 +4,12 @@ import android.os.Build
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -603,19 +606,30 @@ fun NowPlayingScreen(
             if (!showLyrics) {
                 Spacer(modifier = Modifier.height(14.dp))
                 val previewCardBg = lerp(Color(0xFF1E1E24), topColor, 0.72f)
-                val activeLineText = remember(playbackState.lyrics, displayedPositionMs) {
-                    val lyr = playbackState.lyrics
+                val lyr = playbackState.lyrics
+                val activeIdx = remember(lyr, displayedPositionMs) {
                     if (lyr != null && lyr.lines.isNotEmpty()) {
-                        val idx = lyr.findActiveLineIndex(displayedPositionMs).coerceAtLeast(0)
-                        lyr.lines.drop(idx).take(2).joinToString("\n") { it.text }
-                    } else if (!lyr?.plainText.isNullOrBlank()) {
-                        lyr?.plainText?.lines()?.take(2)?.joinToString("\n").orEmpty()
-                    } else if (playbackState.isLyricsLoading) {
-                        "Загрузка текста..."
+                        lyr.findActiveLineIndex(displayedPositionMs).coerceAtLeast(0)
                     } else {
-                        "Нажмите, чтобы открыть текст"
+                        -1
                     }
                 }
+                val previewPair: Pair<String, String?> = remember(lyr, activeIdx, playbackState.isLyricsLoading) {
+                    when {
+                        lyr != null && lyr.lines.isNotEmpty() && activeIdx >= 0 -> {
+                            val current = lyr.lines.getOrNull(activeIdx)?.text.orEmpty()
+                            val next = lyr.lines.getOrNull(activeIdx + 1)?.text
+                            current to next
+                        }
+                        !lyr?.plainText.isNullOrBlank() -> {
+                            val plain = lyr?.plainText?.lines()?.filter { it.isNotBlank() }.orEmpty()
+                            (plain.firstOrNull() ?: "") to plain.getOrNull(1)
+                        }
+                        playbackState.isLyricsLoading -> "Загрузка текста..." to null
+                        else -> "Нажмите, чтобы открыть текст" to null
+                    }
+                }
+                val desktopEase = remember { CubicBezierEasing(0.22f, 1f, 0.36f, 1f) }
                 Surface(
                     onClick = { showLyrics = true },
                     shape = RoundedCornerShape(14.dp),
@@ -630,19 +644,58 @@ fun NowPlayingScreen(
                             style = MaterialTheme.typography.labelLarge.copy(
                                 fontWeight = FontWeight.Bold
                             ),
-                            color = Color.White
+                            color = Color.White.copy(alpha = 0.85f)
                         )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = activeLineText,
-                            style = MaterialTheme.typography.bodyMedium.copy(
-                                fontWeight = FontWeight.Medium,
-                                lineHeight = 20.sp
-                            ),
-                            color = Color.White.copy(alpha = 0.88f),
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        AnimatedContent(
+                            targetState = Triple(activeIdx, previewPair.first, previewPair.second),
+                            transitionSpec = {
+                                val enter = slideInVertically(
+                                    animationSpec = tween(durationMillis = 360, easing = desktopEase),
+                                    initialOffsetY = { fullHeight -> (fullHeight * 0.45f).toInt() }
+                                ) + fadeIn(
+                                    animationSpec = tween(durationMillis = 320, easing = desktopEase)
+                                )
+                                val exit = slideOutVertically(
+                                    animationSpec = tween(durationMillis = 260, easing = desktopEase),
+                                    targetOffsetY = { fullHeight -> -(fullHeight * 0.45f).toInt() }
+                                ) + fadeOut(
+                                    animationSpec = tween(durationMillis = 220, easing = desktopEase)
+                                )
+                                enter togetherWith exit
+                            },
+                            label = "lyrics_preview_slide"
+                        ) { (_, currentLine, nextLine) ->
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(3.dp)
+                            ) {
+                                Text(
+                                    text = currentLine,
+                                    style = MaterialTheme.typography.titleMedium.copy(
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        lineHeight = 21.sp
+                                    ),
+                                    color = Color.White,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                if (!nextLine.isNullOrBlank()) {
+                                    Text(
+                                        text = nextLine,
+                                        style = MaterialTheme.typography.bodyMedium.copy(
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            lineHeight = 19.sp
+                                        ),
+                                        color = Color.White.copy(alpha = 0.55f),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             } else {

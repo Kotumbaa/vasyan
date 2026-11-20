@@ -37,10 +37,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import `fun`.tryliner.android.R
 import `fun`.tryliner.android.core.model.DailyMixItem
 import `fun`.tryliner.android.core.model.Track
 import `fun`.tryliner.android.ui.components.LinerCoverArt
@@ -84,7 +87,7 @@ fun HomeScreen(
                 enabled = !state.isLoading
             ) {
                 Icon(
-                    imageVector = Icons.Rounded.Refresh,
+                    painter = painterResource(R.drawable.ic_mgc_refresh_line),
                     contentDescription = "Refresh",
                     tint = LinerColors.TextSecondary,
                     modifier = Modifier.size(20.dp)
@@ -161,6 +164,51 @@ fun HomeScreen(
                         bottom = (bottomContentPadding.calculateBottomPadding() + 24.dp).coerceAtLeast(148.dp)
                     )
                 ) {
+                    // Compact 2-column quick-access grid (Spotify / Desktop style, zero vertical bloat)
+                    val quickTracks = if (state.recentTracks.isNotEmpty()) {
+                        state.recentTracks.take(6)
+                    } else {
+                        state.popularTracks.take(6)
+                    }
+                    val quickIsRecent = state.recentTracks.isNotEmpty()
+                    if (quickTracks.isNotEmpty()) {
+                        item(key = "quick_grid") {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                quickTracks.chunked(2).forEachIndexed { rowIdx, pair ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        pair.forEachIndexed { colIdx, track ->
+                                            val index = rowIdx * 2 + colIdx
+                                            QuickAccessTile(
+                                                track = track,
+                                                isPlayingCurrent = currentPlayingTrackId == track.id,
+                                                onClick = {
+                                                    if (quickIsRecent) {
+                                                        viewModel.playRecentTrackAt(index)
+                                                    } else {
+                                                        viewModel.playPopularTrackAt(index)
+                                                    }
+                                                },
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                        }
+                                        if (pair.size == 1) {
+                                            Spacer(modifier = Modifier.weight(1f))
+                                        }
+                                    }
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(20.dp))
+                        }
+                    }
+
                     if (state.dailyMixes.isNotEmpty()) {
                         item(key = "mixes_header") {
                             HomeSectionHeader(
@@ -171,7 +219,7 @@ fun HomeScreen(
                         item(key = "mixes_row") {
                             LazyRow(
                                 contentPadding = PaddingValues(horizontal = 16.dp),
-                                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 itemsIndexed(
@@ -184,10 +232,11 @@ fun HomeScreen(
                                     )
                                 }
                             }
-                            Spacer(modifier = Modifier.height(22.dp))
+                            Spacer(modifier = Modifier.height(20.dp))
                         }
                     }
 
+                    // Desktop ListeningNowSection style: horizontal columns of 4 tracks inside bg-fill-subtle panels
                     if (state.popularTracks.isNotEmpty()) {
                         item(key = "trending_header") {
                             HomeSectionHeader(
@@ -195,21 +244,37 @@ fun HomeScreen(
                                 icon = Icons.Rounded.LocalFireDepartment
                             )
                         }
-                        val trendingSlice = state.popularTracks.take(10)
-                        itemsIndexed(
-                            items = trendingSlice,
-                            key = { index, track -> "trending_${track.id}_$index" }
-                        ) { index, track ->
-                            TrackRow(
-                                track = track,
-                                isLiked = likedIds.contains(track.id),
-                                isPlayingCurrent = currentPlayingTrackId == track.id,
-                                onClick = { viewModel.playPopularTrackAt(index) },
-                                onToggleLike = { viewModel.toggleLike(track) },
-                                modifier = Modifier.padding(horizontal = 6.dp)
-                            )
-                        }
-                        item(key = "trending_spacer") {
+                        item(key = "trending_columns") {
+                            val columns = state.popularTracks.take(12).chunked(4)
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                itemsIndexed(
+                                    items = columns,
+                                    key = { colIdx, _ -> "trending_col_$colIdx" }
+                                ) { colIdx, colTracks ->
+                                    Column(
+                                        modifier = Modifier
+                                            .width(304.dp)
+                                            .clip(LinerShapes.Item)
+                                            .background(LinerColors.FillSubtle)
+                                            .padding(vertical = 4.dp)
+                                    ) {
+                                        colTracks.forEachIndexed { rowIdx, track ->
+                                            val globalIdx = colIdx * 4 + rowIdx
+                                            TrackRow(
+                                                track = track,
+                                                isLiked = likedIds.contains(track.id),
+                                                isPlayingCurrent = currentPlayingTrackId == track.id,
+                                                onClick = { viewModel.playPopularTrackAt(globalIdx) },
+                                                onToggleLike = { viewModel.toggleLike(track) }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                             Spacer(modifier = Modifier.height(20.dp))
                         }
                     }
@@ -276,6 +341,44 @@ fun HomeScreen(
 }
 
 @Composable
+private fun QuickAccessTile(
+    track: Track,
+    isPlayingCurrent: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .height(52.dp)
+            .clip(LinerShapes.Control)
+            .background(if (isPlayingCurrent) LinerColors.FillHover else LinerColors.Fill)
+            .clickable(onClick = onClick),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        LinerCoverArt(
+            url = track.cover?.url ?: track.cover?.fallbackUrl,
+            contentDescription = track.title,
+            size = 52.dp,
+            shape = RoundedCornerShape(topStart = 8.dp, bottomStart = 8.dp)
+        )
+        Text(
+            text = track.title,
+            style = MaterialTheme.typography.labelLarge.copy(
+                fontSize = 12.5.sp,
+                lineHeight = 15.sp,
+                fontWeight = FontWeight.SemiBold
+            ),
+            color = if (isPlayingCurrent) Color(0xFF1ED760) else LinerColors.TextPrimary,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = 9.dp)
+        )
+    }
+}
+
+@Composable
 private fun HomeSectionHeader(
     title: String,
     icon: ImageVector
@@ -290,12 +393,15 @@ private fun HomeSectionHeader(
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = LinerColors.TextPrimary,
-            modifier = Modifier.size(18.dp)
+            tint = LinerColors.TextTertiary,
+            modifier = Modifier.size(20.dp)
         )
         Text(
             text = title,
-            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+            style = MaterialTheme.typography.titleLarge.copy(
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold
+            ),
             color = LinerColors.TextPrimary
         )
     }

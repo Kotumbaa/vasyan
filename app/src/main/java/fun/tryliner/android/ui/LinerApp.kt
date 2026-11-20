@@ -8,7 +8,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
@@ -117,39 +119,50 @@ private fun LinerAppContent(container: AppContainer) {
                 containerColor = Color.Transparent,
                 bottomBar = {
                     Column(
-                        modifier = Modifier
-                            .background(
-                                Brush.verticalGradient(
-                                    0.0f to Color.Transparent,
-                                    0.40f to LinerColors.AmbientBase.copy(alpha = 0.45f),
-                                    1.0f to LinerColors.AmbientBase.copy(alpha = 0.78f)
-                                )
-                            )
-                            .navigationBarsPadding()
+                        modifier = Modifier.fillMaxWidth()
                     ) {
                         if (currentTrack != null || activeRemote != null) {
-                            MiniPlayerBar(
-                                playbackState = playbackState,
-                                isLiked = isCurrentTrackLiked,
-                                onToggleLike = { currentTrack?.let(container::toggleLike) },
-                                onTogglePlayPause = container.playerController::togglePlayPause,
-                                onClick = { isNowPlayingOpen = true },
-                                onPrevious = container.playerController::previous,
-                                onNext = container.playerController::next,
-                                remoteState = activeRemote,
-                                onRemoteTogglePlayPause = { container.lanConnectManager.sendCommand("toggle") },
-                                onRemotePrevious = { container.lanConnectManager.sendCommand("prev") },
-                                onRemoteNext = { container.lanConnectManager.sendCommand("next") },
-                                onPlayOnPhone = { container.lanConnectManager.handoffToPhone() }
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(
+                                        Brush.verticalGradient(
+                                            0.0f to Color.Transparent,
+                                            0.65f to Color(0xCC0A0A0C),
+                                            1.0f to Color(0xFF0A0A0C)
+                                        )
+                                    )
+                            ) {
+                                MiniPlayerBar(
+                                    playbackState = playbackState,
+                                    isLiked = isCurrentTrackLiked,
+                                    onToggleLike = { currentTrack?.let(container::toggleLike) },
+                                    onTogglePlayPause = container.playerController::togglePlayPause,
+                                    onClick = { isNowPlayingOpen = true },
+                                    onPrevious = container.playerController::previous,
+                                    onNext = container.playerController::next,
+                                    remoteState = activeRemote,
+                                    onRemoteTogglePlayPause = { container.lanConnectManager.sendCommand("toggle") },
+                                    onRemotePrevious = { container.lanConnectManager.sendCommand("prev") },
+                                    onRemoteNext = { container.lanConnectManager.sendCommand("next") },
+                                    onPlayOnPhone = { container.lanConnectManager.handoffToPhone() }
+                                )
+                            }
                         }
 
-                        HorizontalDivider(thickness = 0.5.dp, color = LinerColors.BorderAlpha14)
-                        NavigationBar(
-                            containerColor = LinerColors.NavBarGlass,
-                            contentColor = LinerColors.TextPrimary,
-                            tonalElevation = 0.dp
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(Color(0xFF0A0A0C))
+                                .navigationBarsPadding()
                         ) {
+                            HorizontalDivider(thickness = 0.5.dp, color = LinerColors.BorderAlpha14)
+                            NavigationBar(
+                                containerColor = Color(0xFF0A0A0C),
+                                contentColor = LinerColors.TextPrimary,
+                                tonalElevation = 0.dp,
+                                windowInsets = WindowInsets(0, 0, 0, 0)
+                            ) {
                             val itemColors = NavigationBarItemDefaults.colors(
                                 selectedIconColor = LinerColors.TextPrimary,
                                 selectedTextColor = LinerColors.TextPrimary,
@@ -233,6 +246,7 @@ private fun LinerAppContent(container: AppContainer) {
                                 label = { Text("Library") },
                                 colors = itemColors
                             )
+                            }
                         }
                     }
                 }
