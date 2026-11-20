@@ -29,6 +29,7 @@ import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -81,6 +82,8 @@ fun LibraryScreen(
     val playbackState by viewModel.playbackState.collectAsStateWithLifecycle()
     val currentTrackId = playbackState.currentTrack?.id
     val filteredLikedTracks = state.filteredLikedTracks
+    val downloadedTracks by viewModel.downloadedTracks.collectAsStateWithLifecycle()
+    val hasDownloads = downloadedTracks.isNotEmpty()
 
     Column(
         modifier = Modifier.fillMaxSize()
@@ -123,12 +126,12 @@ fun LibraryScreen(
         }
 
         when {
-            state.isLoading && state.playlists.isEmpty() && state.likedTracks.isEmpty() -> {
+            state.isLoading && state.playlists.isEmpty() && state.likedTracks.isEmpty() && !hasDownloads -> {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = LinerColors.AccentPrimary)
                 }
             }
-            state.errorMessage != null && state.playlists.isEmpty() && state.likedTracks.isEmpty() -> {
+            state.errorMessage != null && state.playlists.isEmpty() && state.likedTracks.isEmpty() && !hasDownloads -> {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -292,6 +295,62 @@ fun LibraryScreen(
                                     )
                                 }
                             }
+                        }
+                    }
+
+                    // Offline downloads
+                    if (hasDownloads) {
+                        item(key = "downloads_header") {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 16.dp, end = 12.dp, top = 20.dp, bottom = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(
+                                        text = "Скачанные",
+                                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                                        color = LinerColors.TextPrimary
+                                    )
+                                    LinerChip(text = "${downloadedTracks.size}")
+                                }
+                                Row {
+                                    IconButton(onClick = { viewModel.playDownloaded(0, shuffle = true) }) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Shuffle,
+                                            contentDescription = "Перемешать",
+                                            tint = Color.White.copy(alpha = 0.8f),
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                    IconButton(onClick = { viewModel.playDownloaded(0) }) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.PlayArrow,
+                                            contentDescription = "Слушать",
+                                            tint = Color.White.copy(alpha = 0.8f),
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        itemsIndexed(
+                            items = downloadedTracks,
+                            key = { index, track -> "downloaded_${track.id}_$index" }
+                        ) { index, track ->
+                            TrackRow(
+                                track = track,
+                                isLiked = likedIds.contains(track.id),
+                                isPlayingCurrent = currentTrackId == track.id,
+                                onClick = { viewModel.playDownloaded(index) },
+                                onToggleLike = { viewModel.toggleLike(track) },
+                                modifier = Modifier.padding(horizontal = 4.dp)
+                            )
                         }
                     }
 

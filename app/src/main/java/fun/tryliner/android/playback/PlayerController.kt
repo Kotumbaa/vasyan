@@ -57,6 +57,9 @@ class PlayerController(
 
     var onBeforeLocalPlayback: (() -> Unit)? = null
 
+    /** Set by AppContainer; when a track is downloaded, playback uses the local file. */
+    var downloadManager: TrackDownloadManager? = null
+
     private var mediaController: MediaController? = null
     private var resolveJob: Job? = null
     private var lyricsJob: Job? = null
@@ -237,16 +240,17 @@ class PlayerController(
 
         resolveJob = scope.launch {
             runCatching {
+                val localUri = downloadManager?.localUriFor(track.id)
                 val now = System.currentTimeMillis()
                 val cached = streamCache[track.id]?.takeIf { it.expiresAtMs - 60_000L > now }?.stream
-                val resolved = cached ?: withContext(Dispatchers.IO) {
+                val playUri: Uri = localUri ?: Uri.parse((cached ?: withContext(Dispatchers.IO) {
                     innertubeClient.resolveAudioStream(track.id)
                 }.also { fresh ->
                     val expMs = fresh.expiresAt
                         ?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }
                         ?: (now + 5L * 60L * 60L * 1000L)
                     streamCache[track.id] = CachedResolvedStream(fresh, expMs)
-                }
+                }).url)
                 val controller = ensureController()
                 onBeforeLocalPlayback?.invoke()
                 val metadata = MediaMetadata.Builder()
@@ -261,7 +265,7 @@ class PlayerController(
                 val mediaItem = MediaItem.Builder()
                     .setMediaId(track.id)
                     .setCustomCacheKey("track_${track.id}")
-                    .setUri(resolved.url)
+                    .setUri(playUri)
                     .setMediaMetadata(metadata)
                     .build()
 

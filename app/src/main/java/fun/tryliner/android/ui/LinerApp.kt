@@ -22,6 +22,7 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -42,6 +43,7 @@ import androidx.navigation.navArgument
 import `fun`.tryliner.android.AppContainer
 import `fun`.tryliner.android.ui.components.AtmosphericBackdrop
 import `fun`.tryliner.android.ui.components.HumanCheckDialog
+import `fun`.tryliner.android.ui.components.LocalTrackDownloads
 import `fun`.tryliner.android.ui.home.HomeScreen
 import `fun`.tryliner.android.ui.home.HomeViewModel
 import `fun`.tryliner.android.ui.library.LibraryScreen
@@ -68,6 +70,13 @@ object LinerRoutes {
 
 @Composable
 fun LinerApp(container: AppContainer) {
+    CompositionLocalProvider(LocalTrackDownloads provides container.downloadManager) {
+        LinerAppContent(container)
+    }
+}
+
+@Composable
+private fun LinerAppContent(container: AppContainer) {
     val session by container.sessionStorage.sessionFlow.collectAsStateWithLifecycle()
     val pendingHumanCheck by container.pendingHumanCheck.collectAsStateWithLifecycle()
 

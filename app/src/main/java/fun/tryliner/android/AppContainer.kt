@@ -12,6 +12,7 @@ import `fun`.tryliner.android.core.network.LinerApiClient
 import `fun`.tryliner.android.data.EncryptedSessionStorage
 import `fun`.tryliner.android.playback.LanConnectManager
 import `fun`.tryliner.android.playback.PlayerController
+import `fun`.tryliner.android.playback.TrackDownloadManager
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -49,12 +50,18 @@ class AppContainer(context: Context) {
     )
     val innertubeClient = InnertubeClient()
 
+    val downloadManager = TrackDownloadManager(
+        context = appContext,
+        innertubeClient = innertubeClient,
+        scope = appScope
+    )
+
     val playerController = PlayerController(
         context = appContext,
         apiClient = apiClient,
         innertubeClient = innertubeClient,
         scope = appScope
-    )
+    ).also { it.downloadManager = downloadManager }
 
     val lanConnectManager = LanConnectManager(
         context = appContext,

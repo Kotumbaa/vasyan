@@ -439,7 +439,21 @@ fun NowPlayingScreen(
                 }
 
                 if (track != null) {
-                    Spacer(modifier = Modifier.width(12.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Surface(
+                        shape = RoundedCornerShape(999.dp),
+                        color = Color.White.copy(alpha = 0.08f),
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            `fun`.tryliner.android.ui.components.DownloadButton(
+                                track = track,
+                                iconSize = 20.dp,
+                                buttonSize = 40.dp
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
                     Surface(
                         onClick = onToggleLike,
                         shape = RoundedCornerShape(999.dp),

@@ -49,6 +49,18 @@ class LibraryViewModel(
 
     val likedTrackIds: StateFlow<Set<String>> = container.likedTrackIds
     val playbackState: StateFlow<PlaybackUiState> = container.playerController.state
+    val downloadedTracks: StateFlow<List<Track>> = container.downloadManager.downloadedTracks
+
+    fun playDownloaded(index: Int, shuffle: Boolean = false) {
+        val tracks = downloadedTracks.value
+        if (tracks.isNotEmpty()) {
+            container.playerController.playQueue(
+                tracks,
+                startIndex = if (shuffle) tracks.indices.random() else index.coerceIn(0, tracks.lastIndex),
+                shuffle = shuffle
+            )
+        }
+    }
 
     init {
         refresh()

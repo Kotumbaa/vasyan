@@ -75,7 +75,7 @@ class LinerPlaybackService : MediaSessionService() {
         val player = ExoPlayer.Builder(this)
             .setLoadControl(loadControl)
             .setMediaSourceFactory(
-                DefaultMediaSourceFactory(cacheDataSourceFactory)
+                DefaultMediaSourceFactory(LocalFirstDataSource.Factory(cacheDataSourceFactory))
             )
             .setAudioAttributes(audioAttributes, /* handleAudioFocus = */ true)
             .setHandleAudioBecomingNoisy(true)
