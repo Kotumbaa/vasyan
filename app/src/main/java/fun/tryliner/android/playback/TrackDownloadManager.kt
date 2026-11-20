@@ -25,10 +25,14 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
@@ -53,6 +57,7 @@ class TrackDownloadManager(
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = false }
     private val indexSerializer = ListSerializer(Track.serializer())
     private val indexMutex = Mutex()
+    private val downloadSemaphore = Semaphore(2)
     private val jobs = ConcurrentHashMap<String, Job>()
 
     private val httpClient = OkHttpClient.Builder()
@@ -101,21 +106,32 @@ class TrackDownloadManager(
         setState(track.id, TrackDownloadState.Downloading(0f))
         val job = scope.launch(Dispatchers.IO) {
             try {
-                val stream = innertubeClient.resolveAudioStream(track.id)
-                val part = partFile(track.id)
-                part.delete()
-                downloadChunked(stream.url, stream.contentLength, part) { progress ->
-                    setState(track.id, TrackDownloadState.Downloading(progress))
+                downloadSemaphore.withPermit {
+                    val stream = innertubeClient.resolveAudioStream(track.id)
+                    val part = partFile(track.id)
+                    part.delete()
+                    try {
+                        downloadChunked(stream.url, stream.contentLength, part) { progress ->
+                            setState(track.id, TrackDownloadState.Downloading(progress))
+                        }
+                    } catch (chunkErr: IOException) {
+                        Log.w(TAG, "Chunked download failed for ${track.id}, falling back to plain GET: ${chunkErr.message}")
+                        part.delete()
+                        setState(track.id, TrackDownloadState.Downloading(0f))
+                        downloadPlain(stream.url, part) { progress ->
+                            setState(track.id, TrackDownloadState.Downloading(progress))
+                        }
+                    }
+                    val target = audioFile(track.id)
+                    target.delete()
+                    if (!part.renameTo(target)) throw IOException("Failed to finalize download")
+                    indexMutex.withLock {
+                        val updated = listOf(track) + _downloadedTracks.value.filterNot { it.id == track.id }
+                        indexFile.writeText(json.encodeToString(indexSerializer, updated))
+                        _downloadedTracks.value = updated
+                    }
+                    setState(track.id, TrackDownloadState.Downloaded)
                 }
-                val target = audioFile(track.id)
-                target.delete()
-                if (!part.renameTo(target)) throw IOException("Failed to finalize download")
-                indexMutex.withLock {
-                    val updated = listOf(track) + _downloadedTracks.value.filterNot { it.id == track.id }
-                    indexFile.writeText(json.encodeToString(indexSerializer, updated))
-                    _downloadedTracks.value = updated
-                }
-                setState(track.id, TrackDownloadState.Downloaded)
             } catch (e: CancellationException) {
                 partFile(track.id).delete()
                 clearState(track.id)
@@ -167,18 +183,18 @@ class TrackDownloadManager(
         target: File,
         onProgress: (Float) -> Unit,
     ) = withContext(Dispatchers.IO) {
-        val uri = Uri.parse(url)
-        val isGoogleVideo = uri.host?.endsWith(".googlevideo.com", ignoreCase = true) == true
-        if (!isGoogleVideo) {
+        val httpUrl = url.toHttpUrlOrNull()
+        val isGoogleVideo = httpUrl?.host?.endsWith(".googlevideo.com", ignoreCase = true) == true
+        if (!isGoogleVideo || httpUrl == null) {
             downloadPlain(url, target, onProgress)
             return@withContext
         }
 
         var total = knownLength?.takeIf { it > 0 }
-            ?: uri.getQueryParameter("clen")?.toLongOrNull()?.takeIf { it > 0 }
+            ?: httpUrl.queryParameter("clen")?.toLongOrNull()?.takeIf { it > 0 }
         if (total == null) {
             // Probe first chunk to learn total length from Content-Range.
-            val (bytes, probedTotal) = fetchRange(uri, 0, CHUNK_SIZE - 1)
+            val (bytes, probedTotal) = fetchRange(httpUrl, 0, CHUNK_SIZE - 1)
             total = probedTotal ?: throw IOException("Unknown content length")
             RandomAccessFile(target, "rw").use { it.write(bytes) }
         }
@@ -194,7 +210,7 @@ class TrackDownloadManager(
                     async {
                         ensureActive()
                         val end = minOf(start + CHUNK_SIZE - 1, totalLength - 1)
-                        val (bytes, _) = retry(3) { fetchRange(uri, start, end) }
+                        val (bytes, _) = retry(3) { fetchRange(httpUrl, start, end) }
                         synchronized(target) {
                             RandomAccessFile(target, "rw").use { raf ->
                                 raf.seek(start)
@@ -231,14 +247,11 @@ class TrackDownloadManager(
         }
     }
 
-    private fun fetchRange(uri: Uri, start: Long, end: Long): Pair<ByteArray, Long?> {
-        val builder = uri.buildUpon().clearQuery()
-        for (name in uri.queryParameterNames) {
-            if (name.equals("range", ignoreCase = true)) continue
-            for (value in uri.getQueryParameters(name)) builder.appendQueryParameter(name, value)
-        }
-        builder.appendQueryParameter("range", "$start-$end")
-        val request = Request.Builder().url(builder.build().toString()).get().build()
+    private fun fetchRange(httpUrl: HttpUrl, start: Long, end: Long): Pair<ByteArray, Long?> {
+        val rangedUrl = httpUrl.newBuilder()
+            .setQueryParameter("range", "$start-$end")
+            .build()
+        val request = Request.Builder().url(rangedUrl).get().build()
         httpClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw IOException("Chunk $start-$end HTTP ${response.code}")
             val total = response.header("Content-Range")
