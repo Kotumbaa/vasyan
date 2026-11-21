@@ -1,6 +1,12 @@
 package `fun`.tryliner.android.ui.components
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.graphics.graphicsLayer
+import `fun`.tryliner.android.ui.theme.LinerMotion
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -156,6 +162,15 @@ fun TrackRow(
 
         DownloadButton(track = track)
 
+        val heartScale = remember { Animatable(1f) }
+        LaunchedEffect(isLiked) {
+            if (isLiked) {
+                heartScale.animateTo(1.22f, tween(90, easing = LinerMotion.EaseOut))
+                heartScale.animateTo(1f, LinerMotion.bounceSpring())
+            } else {
+                heartScale.snapTo(1f)
+            }
+        }
         IconButton(
             onClick = onToggleLike,
             modifier = Modifier.size(36.dp)
@@ -166,7 +181,12 @@ fun TrackRow(
                 ),
                 contentDescription = stringResource(if (isLiked) R.string.cd_unlike else R.string.cd_like),
                 tint = if (isLiked) LinerColors.AccentRed else LinerColors.TextTertiary,
-                modifier = Modifier.size(19.dp)
+                modifier = Modifier
+                    .size(19.dp)
+                    .graphicsLayer {
+                        scaleX = heartScale.value
+                        scaleY = heartScale.value
+                    }
             )
         }
     }
@@ -198,28 +218,35 @@ fun DownloadButton(
         modifier = modifier.size(buttonSize)
     ) {
         when (state) {
-            is TrackDownloadState.Downloading -> Box(contentAlignment = Alignment.Center) {
-                if (state.progress <= 0f) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(iconSize),
-                        strokeWidth = 2.dp,
-                        color = Color.White.copy(alpha = 0.85f)
-                    )
-                } else {
-                    CircularProgressIndicator(
-                        progress = { state.progress },
-                        modifier = Modifier.size(iconSize),
-                        strokeWidth = 2.dp,
-                        color = Color.White.copy(alpha = 0.85f),
-                        trackColor = Color.White.copy(alpha = 0.15f)
+            is TrackDownloadState.Downloading -> {
+                val smoothProgress by animateFloatAsState(
+                    targetValue = state.progress,
+                    animationSpec = LinerMotion.easeOutTween(180),
+                    label = "trackDownloadProgress"
+                )
+                Box(contentAlignment = Alignment.Center) {
+                    if (state.progress <= 0f) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(iconSize),
+                            strokeWidth = 2.dp,
+                            color = Color.White.copy(alpha = 0.85f)
+                        )
+                    } else {
+                        CircularProgressIndicator(
+                            progress = { smoothProgress },
+                            modifier = Modifier.size(iconSize),
+                            strokeWidth = 2.dp,
+                            color = Color.White.copy(alpha = 0.85f),
+                            trackColor = Color.White.copy(alpha = 0.15f)
+                        )
+                    }
+                    Icon(
+                        painter = painterResource(R.drawable.ic_mgc_close_line),
+                        contentDescription = "Отменить загрузку",
+                        tint = Color.White.copy(alpha = 0.7f),
+                        modifier = Modifier.size(iconSize * 0.5f)
                     )
                 }
-                Icon(
-                    painter = painterResource(R.drawable.ic_mgc_close_line),
-                    contentDescription = "Отменить загрузку",
-                    tint = Color.White.copy(alpha = 0.7f),
-                    modifier = Modifier.size(iconSize * 0.5f)
-                )
             }
             TrackDownloadState.Downloaded -> Icon(
                 painter = painterResource(R.drawable.ic_mgc_check_line),

@@ -1,13 +1,17 @@
 package `fun`.tryliner.android.ui.player
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import `fun`.tryliner.android.ui.theme.LinerMotion
+import kotlin.math.abs
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -141,37 +145,47 @@ fun MiniPlayerBar(
             coverAmbient?.backdropColor ?: LinerColors.AmbientBlue,
             0.82f
         ),
-        animationSpec = tween(durationMillis = 450),
+        animationSpec = LinerMotion.easeOutTween(450),
         label = "miniPlayerBg"
     )
 
     var dragOffsetX by remember { mutableFloatStateOf(0f) }
     val animatedOffsetX by animateFloatAsState(
         targetValue = dragOffsetX,
-        animationSpec = spring(stiffness = 400f, dampingRatio = 0.8f),
+        animationSpec = LinerMotion.snapSpring(),
         label = "miniPlayerSwipeOffset"
     )
     val swipeThresholdPx = with(LocalDensity.current) { 48.dp.toPx() }
+    val dragAlpha = (1f - (abs(animatedOffsetX) / (swipeThresholdPx * 2.5f))).coerceIn(0.65f, 1f)
 
     Surface(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 8.dp, vertical = 4.dp)
-            .graphicsLayer { translationX = animatedOffsetX }
+            .graphicsLayer {
+                translationX = animatedOffsetX
+                alpha = dragAlpha
+            }
             .clip(MiniPlayerShape)
             .pointerInput(mainNext, mainPrevious) {
                 var totalDrag = 0f
+                val velocityTracker = VelocityTracker()
                 detectHorizontalDragGestures(
-                    onDragStart = { totalDrag = 0f },
+                    onDragStart = {
+                        totalDrag = 0f
+                        velocityTracker.resetTracking()
+                    },
                     onHorizontalDrag = { change, dragAmount ->
                         change.consume()
+                        velocityTracker.addPosition(change.uptimeMillis, change.position)
                         totalDrag += dragAmount
                         dragOffsetX = (totalDrag * 0.45f).coerceIn(-80f, 80f)
                     },
                     onDragEnd = {
+                        val vx = velocityTracker.calculateVelocity().x
                         when {
-                            totalDrag <= -swipeThresholdPx -> mainNext()
-                            totalDrag >= swipeThresholdPx -> mainPrevious()
+                            totalDrag <= -swipeThresholdPx || vx <= -450f -> mainNext()
+                            totalDrag >= swipeThresholdPx || vx >= 450f -> mainPrevious()
                         }
                         dragOffsetX = 0f
                     },
@@ -252,6 +266,15 @@ fun MiniPlayerBar(
                 }
 
                 if (!showRemoteAsMain) {
+                    val heartScale = remember { Animatable(1f) }
+                    LaunchedEffect(isLiked) {
+                        if (isLiked) {
+                            heartScale.animateTo(1.22f, tween(90, easing = LinerMotion.EaseOut))
+                            heartScale.animateTo(1f, LinerMotion.bounceSpring())
+                        } else {
+                            heartScale.snapTo(1f)
+                        }
+                    }
                     IconButton(
                         onClick = onToggleLike,
                         modifier = Modifier.size(36.dp)
@@ -262,7 +285,12 @@ fun MiniPlayerBar(
                             ),
                             contentDescription = stringResource(if (isLiked) R.string.cd_unlike else R.string.cd_like),
                             tint = if (isLiked) Color(0xFF1ED760) else Color.White.copy(alpha = 0.72f),
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier
+                                .size(20.dp)
+                                .graphicsLayer {
+                                    scaleX = heartScale.value
+                                    scaleY = heartScale.value
+                                }
                         )
                     }
                 }

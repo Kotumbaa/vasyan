@@ -34,7 +34,7 @@ data class CoverAmbientResult(
 
 object CoverAmbientExtractor {
     private const val SAMPLE_SIZE = 48
-    private const val BLUR_RADIUS = 6
+    private const val BLUR_RADIUS = 8
 
     private val cache = object : LruCache<String, CoverAmbientResult>(64) {}
 

@@ -2,6 +2,7 @@ package `fun`.tryliner.android.ui.home
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,6 +33,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -52,6 +54,7 @@ import `fun`.tryliner.android.ui.components.LinerPanel
 import `fun`.tryliner.android.ui.components.TrackRow
 import `fun`.tryliner.android.ui.theme.LinerColors
 import `fun`.tryliner.android.ui.theme.LinerShapes
+import `fun`.tryliner.android.ui.theme.pressScale
 
 @Composable
 fun HomeScreen(
@@ -347,12 +350,14 @@ private fun QuickAccessTile(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
     Row(
         modifier = modifier
             .height(52.dp)
+            .pressScale(interactionSource, targetScale = 0.97f)
             .clip(LinerShapes.Control)
             .background(if (isPlayingCurrent) LinerColors.FillHover else LinerColors.Fill)
-            .clickable(onClick = onClick),
+            .clickable(interactionSource = interactionSource, indication = null, onClick = onClick),
         verticalAlignment = Alignment.CenterVertically
     ) {
         LinerCoverArt(
@@ -414,11 +419,13 @@ private fun SquareTrackCard(
     onClick: () -> Unit
 ) {
     val cardShape = RoundedCornerShape(12.dp)
+    val interactionSource = remember { MutableInteractionSource() }
     Column(
         modifier = Modifier
             .width(132.dp)
+            .pressScale(interactionSource, targetScale = 0.96f)
             .clip(cardShape)
-            .clickable(onClick = onClick)
+            .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
             .padding(bottom = 4.dp)
     ) {
         Box(contentAlignment = Alignment.Center) {

@@ -4,6 +4,8 @@ import android.os.Build
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
+import `fun`.tryliner.android.ui.theme.LinerMotion
+import `fun`.tryliner.android.ui.theme.rememberReducedMotion
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -57,9 +59,11 @@ fun AtmosphericBackdrop(
     content: @Composable BoxScope.() -> Unit
 ) {
     val coverAmbient = rememberCoverAmbient(coverUrl)
+    val reducedMotion = rememberReducedMotion()
+    val ambientDuration = if (reducedMotion) 0 else LinerMotion.DURATION_AMBIENT
     val animatedTint by animateColorAsState(
         targetValue = coverAmbient?.backdropColor ?: tintColor,
-        animationSpec = tween(durationMillis = 650),
+        animationSpec = LinerMotion.easeOutTween(ambientDuration),
         label = "atmosphericBackdropTint"
     )
     // Desktop PageCoverBackdrop samples cover color at FILL_DARKEN=0.38 across the entire viewport
@@ -74,14 +78,9 @@ fun AtmosphericBackdrop(
         if (blurredBitmap != null) {
             Crossfade(
                 targetState = blurredBitmap,
-                animationSpec = tween(durationMillis = 650),
+                animationSpec = LinerMotion.easeOutTween(ambientDuration),
                 label = "atmosphericCoverBlur"
             ) { bitmap ->
-                val blurModifier = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    Modifier.blur(56.dp, edgeTreatment = BlurredEdgeTreatment.Rectangle)
-                } else {
-                    Modifier
-                }
                 Image(
                     bitmap = bitmap,
                     contentDescription = null,
@@ -90,7 +89,6 @@ fun AtmosphericBackdrop(
                     modifier = Modifier
                         .fillMaxSize()
                         .alpha(0.36f)
-                        .then(blurModifier)
                 )
             }
         }

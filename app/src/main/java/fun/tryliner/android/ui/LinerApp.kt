@@ -2,7 +2,12 @@ package `fun`.tryliner.android.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -64,6 +69,8 @@ import `fun`.tryliner.android.ui.playlist.PlaylistDetailViewModel
 import `fun`.tryliner.android.ui.search.SearchScreen
 import `fun`.tryliner.android.ui.search.SearchViewModel
 import `fun`.tryliner.android.ui.theme.LinerColors
+import `fun`.tryliner.android.ui.theme.LinerMotion
+import `fun`.tryliner.android.ui.theme.rememberReducedMotion
 
 object LinerRoutes {
     const val HOME = "home"
@@ -95,6 +102,7 @@ private fun LinerAppContent(container: AppContainer) {
         val navController = rememberNavController()
         val navBackStackEntry by navController.currentBackStackEntryAsState()
         val currentRoute = navBackStackEntry?.destination?.route
+        val reducedMotion = rememberReducedMotion()
 
         val playbackState by container.playerController.state.collectAsStateWithLifecycle()
         val remoteState by container.lanConnectManager.remoteState.collectAsStateWithLifecycle()
@@ -254,6 +262,12 @@ private fun LinerAppContent(container: AppContainer) {
                 NavHost(
                     navController = navController,
                     startDestination = LinerRoutes.HOME,
+                    enterTransition = {
+                        fadeIn(tween(if (reducedMotion) 0 else LinerMotion.DURATION_FAST, easing = LinerMotion.EaseOut))
+                    },
+                    exitTransition = {
+                        fadeOut(tween(if (reducedMotion) 0 else 110, easing = LinerMotion.EaseOut))
+                    },
                     modifier = Modifier
                         .fillMaxSize()
                         .statusBarsPadding()
@@ -297,7 +311,23 @@ private fun LinerAppContent(container: AppContainer) {
 
                     composable(
                         route = LinerRoutes.PLAYLIST_DETAIL,
-                        arguments = listOf(navArgument("playlistId") { type = NavType.StringType })
+                        arguments = listOf(navArgument("playlistId") { type = NavType.StringType }),
+                        enterTransition = {
+                            if (reducedMotion) {
+                                fadeIn(tween(0))
+                            } else {
+                                slideInHorizontally(LinerMotion.easeOutTween(LinerMotion.DURATION_NORMAL)) { it / 8 } +
+                                    fadeIn(LinerMotion.easeOutTween(180))
+                            }
+                        },
+                        popExitTransition = {
+                            if (reducedMotion) {
+                                fadeOut(tween(0))
+                            } else {
+                                slideOutHorizontally(LinerMotion.easeOutTween(200)) { it / 8 } +
+                                    fadeOut(LinerMotion.easeOutTween(160))
+                            }
+                        }
                     ) { backStackEntry ->
                         val playlistId = backStackEntry.arguments?.getString("playlistId")
                             ?: LIKED_PLAYLIST_ID
@@ -317,8 +347,18 @@ private fun LinerAppContent(container: AppContainer) {
 
             AnimatedVisibility(
                 visible = isNowPlayingOpen && (currentTrack != null || activeRemote?.track != null),
-                enter = slideInVertically(initialOffsetY = { it }),
-                exit = slideOutVertically(targetOffsetY = { it })
+                enter = if (reducedMotion) {
+                    fadeIn(tween(0))
+                } else {
+                    slideInVertically(LinerMotion.easeOutTween(LinerMotion.DURATION_SHEET)) { it } +
+                        fadeIn(LinerMotion.easeOutTween(180))
+                },
+                exit = if (reducedMotion) {
+                    fadeOut(tween(0))
+                } else {
+                    slideOutVertically(LinerMotion.easeOutTween(240)) { it } +
+                        fadeOut(LinerMotion.easeOutTween(180))
+                }
             ) {
                 BackHandler(enabled = isNowPlayingOpen) {
                     isNowPlayingOpen = false

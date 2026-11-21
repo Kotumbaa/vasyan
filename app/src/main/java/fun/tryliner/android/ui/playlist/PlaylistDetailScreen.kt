@@ -1,5 +1,6 @@
 package `fun`.tryliner.android.ui.playlist
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -59,6 +60,7 @@ import `fun`.tryliner.android.ui.components.LocalTrackDownloads
 import `fun`.tryliner.android.ui.components.TrackRow
 import `fun`.tryliner.android.ui.components.formatDurationMs
 import `fun`.tryliner.android.ui.theme.LinerColors
+import `fun`.tryliner.android.ui.theme.LinerMotion
 import `fun`.tryliner.android.ui.theme.LinerShapes
 import kotlin.math.abs
 
@@ -401,7 +403,12 @@ private fun PlaylistDownloadButton(
         Box(contentAlignment = Alignment.Center) {
             when {
                 anyDownloading -> {
-                    val progress = if (tracks.isNotEmpty()) downloadedCount.toFloat() / tracks.size else 0f
+                    val rawProgress = if (tracks.isNotEmpty()) downloadedCount.toFloat() / tracks.size else 0f
+                    val progress by animateFloatAsState(
+                        targetValue = rawProgress,
+                        animationSpec = LinerMotion.easeOutTween(180),
+                        label = "playlistDownloadProgress"
+                    )
                     if (progress <= 0f) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(20.dp),

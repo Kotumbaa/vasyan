@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.sp
 import `fun`.tryliner.android.core.lyrics.LyricLine
 import `fun`.tryliner.android.core.lyrics.SyncedLyrics
 import `fun`.tryliner.android.ui.theme.LinerColors
+import `fun`.tryliner.android.ui.theme.LinerMotion
 import `fun`.tryliner.android.ui.theme.LinerShapes
 
 @Composable

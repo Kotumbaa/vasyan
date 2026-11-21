@@ -4,15 +4,23 @@ import android.os.Build
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import `fun`.tryliner.android.ui.theme.LinerMotion
+import `fun`.tryliner.android.ui.theme.pressScale
+import `fun`.tryliner.android.ui.theme.rememberReducedMotion
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -193,21 +201,29 @@ fun NowPlayingScreen(
     val coverAmbient = rememberCoverAmbient(coverUrl)
     val targetTopColor = coverAmbient?.backdropColor ?: LinerColors.AmbientBlue
     val targetMidColor = coverAmbient?.backdropColor?.copy(alpha = 0.72f) ?: LinerColors.AmbientBlue.copy(alpha = 0.72f)
+    val reducedMotion = rememberReducedMotion()
     val topColor by animateColorAsState(
         targetValue = targetTopColor,
-        animationSpec = tween(durationMillis = 550),
+        animationSpec = LinerMotion.easeOutTween(if (reducedMotion) 0 else LinerMotion.DURATION_AMBIENT),
         label = "nowPlayingTopColor"
     )
     val midColor by animateColorAsState(
         targetValue = targetMidColor,
-        animationSpec = tween(durationMillis = 550),
+        animationSpec = LinerMotion.easeOutTween(if (reducedMotion) 0 else LinerMotion.DURATION_AMBIENT),
         label = "nowPlayingMidColor"
     )
 
     var dismissOffsetY by remember { mutableFloatStateOf(0f) }
+    var isCollapsing by remember { mutableStateOf(false) }
+    DisposableEffect(Unit) {
+        onDispose {
+            dismissOffsetY = 0f
+            isCollapsing = false
+        }
+    }
     val animatedDismissY by animateFloatAsState(
         targetValue = dismissOffsetY,
-        animationSpec = spring(stiffness = 380f, dampingRatio = 0.85f),
+        animationSpec = LinerMotion.snapSpring(),
         label = "nowPlayingDismissY"
     )
     val dismissThresholdPx = with(LocalDensity.current) { 110.dp.toPx() }
@@ -219,8 +235,11 @@ fun NowPlayingScreen(
             .background(BackdropBase)
             .pointerInput(showLyrics, onCollapse) {
                 if (!showLyrics) {
+                    val velocityTracker = VelocityTracker()
                     detectVerticalDragGestures(
+                        onDragStart = { velocityTracker.resetTracking() },
                         onVerticalDrag = { change, dragAmount ->
+                            velocityTracker.addPosition(change.uptimeMillis, change.position)
                             val next = (dismissOffsetY + dragAmount).coerceAtLeast(0f)
                             if (next > 0f || dragAmount > 0f) {
                                 change.consume()
@@ -228,12 +247,17 @@ fun NowPlayingScreen(
                             }
                         },
                         onDragEnd = {
-                            if (dismissOffsetY >= dismissThresholdPx) {
+                            val vy = velocityTracker.calculateVelocity().y
+                            if (dismissOffsetY >= dismissThresholdPx || vy >= 650f) {
+                                isCollapsing = true
                                 onCollapse()
+                            } else {
+                                dismissOffsetY = 0f
                             }
-                            dismissOffsetY = 0f
                         },
-                        onDragCancel = { dismissOffsetY = 0f }
+                        onDragCancel = {
+                            if (!isCollapsing) dismissOffsetY = 0f
+                        }
                     )
                 }
             }
@@ -243,14 +267,9 @@ fun NowPlayingScreen(
         if (blurredBitmap != null) {
             Crossfade(
                 targetState = blurredBitmap,
-                animationSpec = tween(durationMillis = 600),
+                animationSpec = LinerMotion.easeOutTween(if (reducedMotion) 0 else 600),
                 label = "nowPlayingCoverBlur"
             ) { bitmap ->
-                val blurModifier = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    Modifier.blur(56.dp, edgeTreatment = BlurredEdgeTreatment.Rectangle)
-                } else {
-                    Modifier
-                }
                 Image(
                     bitmap = bitmap,
                     contentDescription = null,
@@ -259,7 +278,6 @@ fun NowPlayingScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .alpha(0.38f)
-                        .then(blurModifier)
                 )
             }
         }
@@ -306,8 +324,11 @@ fun NowPlayingScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .pointerInput(onCollapse) {
+                        val velocityTracker = VelocityTracker()
                         detectVerticalDragGestures(
+                            onDragStart = { velocityTracker.resetTracking() },
                             onVerticalDrag = { change, dragAmount ->
+                                velocityTracker.addPosition(change.uptimeMillis, change.position)
                                 val next = (dismissOffsetY + dragAmount).coerceAtLeast(0f)
                                 if (next > 0f || dragAmount > 0f) {
                                     change.consume()
@@ -315,12 +336,17 @@ fun NowPlayingScreen(
                                 }
                             },
                             onDragEnd = {
-                                if (dismissOffsetY >= dismissThresholdPx) {
+                                val vy = velocityTracker.calculateVelocity().y
+                                if (dismissOffsetY >= dismissThresholdPx || vy >= 650f) {
+                                    isCollapsing = true
                                     onCollapse()
+                                } else {
+                                    dismissOffsetY = 0f
                                 }
-                                dismissOffsetY = 0f
                             },
-                            onDragCancel = { dismissOffsetY = 0f }
+                            onDragCancel = {
+                                if (!isCollapsing) dismissOffsetY = 0f
+                            }
                         )
                     },
                 verticalAlignment = Alignment.CenterVertically,
@@ -411,7 +437,16 @@ fun NowPlayingScreen(
             ) {
                 AnimatedContent(
                     targetState = showLyrics,
-                    transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(180)) },
+                    transitionSpec = {
+                        if (reducedMotion) {
+                            fadeIn(tween(0)) togetherWith fadeOut(tween(0))
+                        } else {
+                            (fadeIn(LinerMotion.easeOutTween(LinerMotion.DURATION_NORMAL)) +
+                                scaleIn(LinerMotion.easeOutTween(LinerMotion.DURATION_NORMAL), initialScale = 0.96f)) togetherWith
+                                (fadeOut(LinerMotion.easeOutTween(160)) +
+                                    scaleOut(LinerMotion.easeOutTween(160), targetScale = 0.98f))
+                        }
+                    },
                     label = "now_playing_center"
                 ) { lyricsVisible ->
                     if (lyricsVisible) {
@@ -479,6 +514,15 @@ fun NowPlayingScreen(
 
                 if (track != null) {
                     Spacer(modifier = Modifier.width(8.dp))
+                    val heartScale = remember { Animatable(1f) }
+                    LaunchedEffect(isLiked) {
+                        if (isLiked && !reducedMotion) {
+                            heartScale.animateTo(1.22f, tween(90, easing = LinerMotion.EaseOut))
+                            heartScale.animateTo(1f, LinerMotion.bounceSpring())
+                        } else {
+                            heartScale.snapTo(1f)
+                        }
+                    }
                     IconButton(
                         onClick = onToggleLike,
                         modifier = Modifier.size(40.dp)
@@ -491,7 +535,12 @@ fun NowPlayingScreen(
                                 if (isLiked) R.string.cd_unlike else R.string.cd_like
                             ),
                             tint = if (isLiked) Color(0xFF1ED760) else Color.White.copy(alpha = 0.75f),
-                            modifier = Modifier.size(26.dp)
+                            modifier = Modifier
+                                .size(26.dp)
+                                .graphicsLayer {
+                                    scaleX = heartScale.value
+                                    scaleY = heartScale.value
+                                }
                         )
                     }
                 }
@@ -592,14 +641,18 @@ fun NowPlayingScreen(
                     )
                 }
 
+                val playInteraction = remember { MutableInteractionSource() }
                 FilledIconButton(
                     onClick = effectiveTogglePlayPause,
+                    interactionSource = playInteraction,
                     shape = CircleShape,
                     colors = IconButtonDefaults.filledIconButtonColors(
                         containerColor = Color.White,
                         contentColor = BackdropBase
                     ),
-                    modifier = Modifier.size(64.dp)
+                    modifier = Modifier
+                        .size(64.dp)
+                        .pressScale(playInteraction, targetScale = 0.94f)
                 ) {
                     if (effectiveIsBuffering) {
                         CircularProgressIndicator(
@@ -682,7 +735,7 @@ fun NowPlayingScreen(
                         else -> "Нажмите, чтобы открыть текст" to null
                     }
                 }
-                val desktopEase = remember { CubicBezierEasing(0.22f, 1f, 0.36f, 1f) }
+                val desktopEase = LinerMotion.EaseOut
                 Surface(
                     onClick = { showLyrics = true },
                     shape = RoundedCornerShape(14.dp),
@@ -767,6 +820,17 @@ private fun MinimalScrubber(
     onScrubCancel: () -> Unit
 ) {
     val pillShape = RoundedCornerShape(999.dp)
+    var isDragging by remember { mutableStateOf(false) }
+    val trackHeightDp by animateDpAsState(
+        targetValue = if (isDragging) 5.dp else 3.dp,
+        animationSpec = LinerMotion.easeOutTween(120),
+        label = "scrubberTrackHeight"
+    )
+    val thumbRadiusDp by animateDpAsState(
+        targetValue = if (isDragging) 8.dp else 5.5.dp,
+        animationSpec = LinerMotion.easeOutTween(120),
+        label = "scrubberThumbRadius"
+    )
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -781,6 +845,7 @@ private fun MinimalScrubber(
                 var lastScrubMs = 0L
                 detectHorizontalDragGestures(
                     onDragStart = { offset ->
+                        isDragging = true
                         val fraction = (offset.x / size.width.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f)
                         lastScrubMs = (fraction * durationMs).toLong()
                         onScrub(lastScrubMs)
@@ -791,8 +856,14 @@ private fun MinimalScrubber(
                         lastScrubMs = (fraction * durationMs).toLong()
                         onScrub(lastScrubMs)
                     },
-                    onDragEnd = { onScrubEnd(lastScrubMs) },
-                    onDragCancel = onScrubCancel
+                    onDragEnd = {
+                        isDragging = false
+                        onScrubEnd(lastScrubMs)
+                    },
+                    onDragCancel = {
+                        isDragging = false
+                        onScrubCancel()
+                    }
                 )
             },
         contentAlignment = Alignment.Center
@@ -800,12 +871,12 @@ private fun MinimalScrubber(
         Canvas(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(14.dp)
+                .height(18.dp)
         ) {
             val fraction = progress.coerceIn(0f, 1f)
             val centerY = size.height / 2f
-            val trackHeight = 3.dp.toPx()
-            val thumbRadius = 5.5.dp.toPx()
+            val trackHeight = trackHeightDp.toPx()
+            val thumbRadius = thumbRadiusDp.toPx()
             val usableWidth = (size.width - thumbRadius * 2).coerceAtLeast(1f)
             val thumbX = thumbRadius + usableWidth * fraction
 
