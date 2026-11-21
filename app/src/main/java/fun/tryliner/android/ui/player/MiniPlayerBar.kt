@@ -41,9 +41,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -149,47 +151,63 @@ fun MiniPlayerBar(
         label = "miniPlayerBg"
     )
 
-    var dragOffsetX by remember { mutableFloatStateOf(0f) }
-    val animatedOffsetX by animateFloatAsState(
-        targetValue = dragOffsetX,
-        animationSpec = LinerMotion.snapSpring(),
-        label = "miniPlayerSwipeOffset"
-    )
-    val swipeThresholdPx = with(LocalDensity.current) { 48.dp.toPx() }
-    val dragAlpha = (1f - (abs(animatedOffsetX) / (swipeThresholdPx * 2.5f))).coerceIn(0.65f, 1f)
+    val swipeOffsetX = remember { Animatable(0f) }
+    val scope = rememberCoroutineScope()
+    val haptics = LocalHapticFeedback.current
+    val swipeThresholdPx = with(LocalDensity.current) { 52.dp.toPx() }
+    val rubberbandDimPx = with(LocalDensity.current) { 140.dp.toPx() }
+    val dragAlpha = (1f - (abs(swipeOffsetX.value) / (swipeThresholdPx * 3.0f))).coerceIn(0.68f, 1f)
 
     Surface(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 8.dp, vertical = 4.dp)
             .graphicsLayer {
-                translationX = animatedOffsetX
+                translationX = swipeOffsetX.value
                 alpha = dragAlpha
             }
             .clip(MiniPlayerShape)
             .pointerInput(mainNext, mainPrevious) {
-                var totalDrag = 0f
+                var rawDrag = 0f
                 val velocityTracker = VelocityTracker()
                 detectHorizontalDragGestures(
                     onDragStart = {
-                        totalDrag = 0f
+                        rawDrag = 0f
                         velocityTracker.resetTracking()
                     },
                     onHorizontalDrag = { change, dragAmount ->
                         change.consume()
                         velocityTracker.addPosition(change.uptimeMillis, change.position)
-                        totalDrag += dragAmount
-                        dragOffsetX = (totalDrag * 0.45f).coerceIn(-80f, 80f)
+                        rawDrag += dragAmount
+                        val rubberbanded = LinerMotion.rubberband(rawDrag, rubberbandDimPx, 0.65f)
+                        scope.launch { swipeOffsetX.snapTo(rubberbanded) }
                     },
                     onDragEnd = {
                         val vx = velocityTracker.calculateVelocity().x
+                        val projected = rawDrag + LinerMotion.projectMomentum(vx, decelerationRate = 0.985f)
                         when {
-                            totalDrag <= -swipeThresholdPx || vx <= -450f -> mainNext()
-                            totalDrag >= swipeThresholdPx || vx >= 450f -> mainPrevious()
+                            projected <= -swipeThresholdPx -> {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                mainNext()
+                            }
+                            projected >= swipeThresholdPx -> {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                mainPrevious()
+                            }
                         }
-                        dragOffsetX = 0f
+                        scope.launch {
+                            swipeOffsetX.animateTo(
+                                targetValue = 0f,
+                                animationSpec = LinerMotion.appleMomentumSpring(),
+                                initialVelocity = vx * 0.45f
+                            )
+                        }
                     },
-                    onDragCancel = { dragOffsetX = 0f }
+                    onDragCancel = {
+                        scope.launch {
+                            swipeOffsetX.animateTo(0f, LinerMotion.appleDefaultSpring())
+                        }
+                    }
                 )
             }
             .clickable(onClick = onClick),

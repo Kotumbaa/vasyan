@@ -1,14 +1,21 @@
 package `fun`.tryliner.android.ui
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -119,12 +126,46 @@ private fun LinerAppContent(container: AppContainer) {
             ?: currentTrack?.cover?.fallbackUrl
             ?: activeRemote?.track?.coverUrl
 
+        val hasPlayableTrack = currentTrack != null || activeRemote?.track != null
+        val sheetProgress = remember { Animatable(1f) } // 0f = open, 1f = closed
+        val scope = rememberCoroutineScope()
+        val density = LocalDensity.current
+        val screenHeightPx = with(density) { LocalConfiguration.current.screenHeightDp.dp.toPx().coerceAtLeast(1f) }
+
+        LaunchedEffect(isNowPlayingOpen, hasPlayableTrack, reducedMotion) {
+            val target = if (isNowPlayingOpen && hasPlayableTrack) 0f else 1f
+            if (reducedMotion) {
+                sheetProgress.snapTo(target)
+            } else {
+                sheetProgress.animateTo(
+                    targetValue = target,
+                    animationSpec = if (target == 0f) {
+                        LinerMotion.appleMomentumSpring()
+                    } else {
+                        LinerMotion.appleDefaultSpring()
+                    }
+                )
+            }
+        }
+
+        val openFactor = (1f - sheetProgress.value).coerceIn(0f, 1f)
+        val bgScale = 1f - 0.055f * openFactor
+        val bgCorner = (18f * openFactor).dp
+
         AtmosphericBackdrop(
             modifier = Modifier.fillMaxSize(),
             coverUrl = activeCoverUrl
         ) {
             Scaffold(
                 containerColor = Color.Transparent,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = bgScale
+                        scaleY = bgScale
+                        alpha = 1f - 0.25f * openFactor
+                    }
+                    .clip(RoundedCornerShape(bgCorner)),
                 bottomBar = {
                     Column(
                         modifier = Modifier.fillMaxWidth()
@@ -345,37 +386,60 @@ private fun LinerAppContent(container: AppContainer) {
                 }
             }
 
-            AnimatedVisibility(
-                visible = isNowPlayingOpen && (currentTrack != null || activeRemote?.track != null),
-                enter = if (reducedMotion) {
-                    fadeIn(tween(0))
-                } else {
-                    slideInVertically(LinerMotion.easeOutTween(LinerMotion.DURATION_SHEET)) { it } +
-                        fadeIn(LinerMotion.easeOutTween(180))
-                },
-                exit = if (reducedMotion) {
-                    fadeOut(tween(0))
-                } else {
-                    slideOutVertically(LinerMotion.easeOutTween(240)) { it } +
-                        fadeOut(LinerMotion.easeOutTween(180))
-                }
-            ) {
+            if (hasPlayableTrack && (isNowPlayingOpen || sheetProgress.value < 0.998f)) {
                 BackHandler(enabled = isNowPlayingOpen) {
                     isNowPlayingOpen = false
                 }
-                NowPlayingScreen(
-                    playbackState = playbackState,
-                    isLiked = isCurrentTrackLiked,
-                    onCollapse = { isNowPlayingOpen = false },
-                    onToggleLike = {
-                        currentTrack?.let(container::toggleLike)
-                    },
-                    onTogglePlayPause = container.playerController::togglePlayPause,
-                    onNext = container.playerController::next,
-                    onPrevious = container.playerController::previous,
-                    onToggleShuffle = container.playerController::toggleShuffle,
-                    onSeekTo = container.playerController::seekTo
-                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            translationY = sheetProgress.value * screenHeightPx
+                            alpha = if (reducedMotion) (1f - sheetProgress.value) else 1f
+                        }
+                ) {
+                    NowPlayingScreen(
+                        playbackState = playbackState,
+                        isLiked = isCurrentTrackLiked,
+                        onCollapse = { isNowPlayingOpen = false },
+                        onDragDelta = { deltaPx ->
+                            scope.launch {
+                                val next = (sheetProgress.value + deltaPx / screenHeightPx).coerceIn(0f, 1f)
+                                sheetProgress.snapTo(next)
+                            }
+                        },
+                        onDragRelease = { velocityYPx ->
+                            val projected = sheetProgress.value +
+                                LinerMotion.projectMomentum(velocityYPx / screenHeightPx, 0.99f)
+                            if (projected > 0.36f) {
+                                scope.launch {
+                                    sheetProgress.animateTo(
+                                        targetValue = 1f,
+                                        animationSpec = LinerMotion.appleDefaultSpring(),
+                                        initialVelocity = (velocityYPx / screenHeightPx).coerceAtLeast(0f)
+                                    )
+                                    isNowPlayingOpen = false
+                                }
+                            } else {
+                                scope.launch {
+                                    sheetProgress.animateTo(
+                                        targetValue = 0f,
+                                        animationSpec = LinerMotion.appleMomentumSpring(),
+                                        initialVelocity = velocityYPx / screenHeightPx
+                                    )
+                                }
+                            }
+                        },
+                        onToggleLike = {
+                            currentTrack?.let(container::toggleLike)
+                        },
+                        onTogglePlayPause = container.playerController::togglePlayPause,
+                        onNext = container.playerController::next,
+                        onPrevious = container.playerController::previous,
+                        onToggleShuffle = container.playerController::toggleShuffle,
+                        onSeekTo = container.playerController::seekTo
+                    )
+                }
             }
         }
     }

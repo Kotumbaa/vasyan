@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import kotlin.math.abs
 
 object LinerMotion {
     /** Desktop DESIGN.md default curve: [0.22, 1, 0.36, 1] */
@@ -30,11 +31,35 @@ object LinerMotion {
     fun <T> easeOutTween(durationMs: Int = DURATION_NORMAL): TweenSpec<T> =
         tween(durationMillis = durationMs, easing = EaseOut)
 
+    /** Apple WWDC critically damped default (damping 1.0, zero overshoot). */
+    fun <T> appleDefaultSpring(): SpringSpec<T> =
+        spring(stiffness = 420f, dampingRatio = Spring.DampingRatioNoBouncy)
+
+    /** Apple WWDC momentum spring (damping ~0.82, slight physical settle after flick). */
+    fun <T> appleMomentumSpring(): SpringSpec<T> =
+        spring(stiffness = 380f, dampingRatio = 0.82f)
+
     fun <T> snapSpring(): SpringSpec<T> =
         spring(stiffness = 400f, dampingRatio = 0.82f)
 
     fun <T> bounceSpring(): SpringSpec<T> =
         spring(stiffness = 500f, dampingRatio = Spring.DampingRatioMediumBouncy)
+
+    /**
+     * Apple "Designing Fluid Interfaces" exponential-decay momentum projection:
+     * projects resting offset from release velocity.
+     */
+    fun projectMomentum(velocityPerSec: Float, decelerationRate: Float = 0.992f): Float {
+        return (velocityPerSec / 1000f) * decelerationRate / (1f - decelerationRate)
+    }
+
+    /**
+     * Apple soft-boundary rubber-banding past an edge.
+     */
+    fun rubberband(overshoot: Float, dimension: Float, constant: Float = 0.55f): Float {
+        if (dimension <= 0f) return 0f
+        return (overshoot * dimension * constant) / (dimension + constant * abs(overshoot))
+    }
 }
 
 @Composable
@@ -59,7 +84,7 @@ fun Modifier.pressScale(
     val reduced = rememberReducedMotion()
     val scale by animateFloatAsState(
         targetValue = if (pressed && !reduced) targetScale else 1f,
-        animationSpec = spring(stiffness = 500f, dampingRatio = 0.8f),
+        animationSpec = spring(stiffness = 700f, dampingRatio = Spring.DampingRatioNoBouncy),
         label = "pressScale"
     )
     graphicsLayer {

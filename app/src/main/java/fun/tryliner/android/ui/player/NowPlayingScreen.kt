@@ -93,10 +93,12 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -130,7 +132,9 @@ fun NowPlayingScreen(
     onNext: () -> Unit,
     onPrevious: () -> Unit,
     onToggleShuffle: () -> Unit,
-    onSeekTo: (Long) -> Unit
+    onSeekTo: (Long) -> Unit,
+    onDragDelta: ((Float) -> Unit)? = null,
+    onDragRelease: ((Float) -> Unit)? = null,
 ) {
     val app = LocalContext.current.applicationContext as? LinerApplication
     val lanConnectManager = app?.container?.lanConnectManager
@@ -213,50 +217,45 @@ fun NowPlayingScreen(
         label = "nowPlayingMidColor"
     )
 
-    var dismissOffsetY by remember { mutableFloatStateOf(0f) }
-    var isCollapsing by remember { mutableStateOf(false) }
-    DisposableEffect(Unit) {
-        onDispose {
-            dismissOffsetY = 0f
-            isCollapsing = false
-        }
-    }
-    val animatedDismissY by animateFloatAsState(
-        targetValue = dismissOffsetY,
-        animationSpec = LinerMotion.snapSpring(),
-        label = "nowPlayingDismissY"
-    )
+    val haptics = LocalHapticFeedback.current
     val dismissThresholdPx = with(LocalDensity.current) { 110.dp.toPx() }
+    var localDragY by remember { mutableFloatStateOf(0f) }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .graphicsLayer { translationY = animatedDismissY }
             .background(BackdropBase)
-            .pointerInput(showLyrics, onCollapse) {
+            .pointerInput(showLyrics, onCollapse, onDragDelta, onDragRelease) {
                 if (!showLyrics) {
                     val velocityTracker = VelocityTracker()
                     detectVerticalDragGestures(
-                        onDragStart = { velocityTracker.resetTracking() },
+                        onDragStart = {
+                            localDragY = 0f
+                            velocityTracker.resetTracking()
+                        },
                         onVerticalDrag = { change, dragAmount ->
                             velocityTracker.addPosition(change.uptimeMillis, change.position)
-                            val next = (dismissOffsetY + dragAmount).coerceAtLeast(0f)
-                            if (next > 0f || dragAmount > 0f) {
+                            localDragY = (localDragY + dragAmount).coerceAtLeast(0f)
+                            if (localDragY > 0f || dragAmount > 0f) {
                                 change.consume()
-                                dismissOffsetY = next
+                                onDragDelta?.invoke(dragAmount)
                             }
                         },
                         onDragEnd = {
                             val vy = velocityTracker.calculateVelocity().y
-                            if (dismissOffsetY >= dismissThresholdPx || vy >= 650f) {
-                                isCollapsing = true
+                            if (onDragRelease != null) {
+                                if (localDragY > 12f || vy >= 650f) {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                }
+                                onDragRelease.invoke(vy)
+                            } else if (localDragY >= dismissThresholdPx || vy >= 650f) {
                                 onCollapse()
-                            } else {
-                                dismissOffsetY = 0f
                             }
+                            localDragY = 0f
                         },
                         onDragCancel = {
-                            if (!isCollapsing) dismissOffsetY = 0f
+                            onDragRelease?.invoke(0f)
+                            localDragY = 0f
                         }
                     )
                 }
@@ -323,29 +322,36 @@ fun NowPlayingScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .pointerInput(onCollapse) {
+                    .pointerInput(onCollapse, onDragDelta, onDragRelease) {
                         val velocityTracker = VelocityTracker()
                         detectVerticalDragGestures(
-                            onDragStart = { velocityTracker.resetTracking() },
+                            onDragStart = {
+                                localDragY = 0f
+                                velocityTracker.resetTracking()
+                            },
                             onVerticalDrag = { change, dragAmount ->
                                 velocityTracker.addPosition(change.uptimeMillis, change.position)
-                                val next = (dismissOffsetY + dragAmount).coerceAtLeast(0f)
-                                if (next > 0f || dragAmount > 0f) {
+                                localDragY = (localDragY + dragAmount).coerceAtLeast(0f)
+                                if (localDragY > 0f || dragAmount > 0f) {
                                     change.consume()
-                                    dismissOffsetY = next
+                                    onDragDelta?.invoke(dragAmount)
                                 }
                             },
                             onDragEnd = {
                                 val vy = velocityTracker.calculateVelocity().y
-                                if (dismissOffsetY >= dismissThresholdPx || vy >= 650f) {
-                                    isCollapsing = true
+                                if (onDragRelease != null) {
+                                    if (localDragY > 12f || vy >= 650f) {
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    }
+                                    onDragRelease.invoke(vy)
+                                } else if (localDragY >= dismissThresholdPx || vy >= 650f) {
                                     onCollapse()
-                                } else {
-                                    dismissOffsetY = 0f
                                 }
+                                localDragY = 0f
                             },
                             onDragCancel = {
-                                if (!isCollapsing) dismissOffsetY = 0f
+                                onDragRelease?.invoke(0f)
+                                localDragY = 0f
                             }
                         )
                     },
@@ -526,7 +532,10 @@ fun NowPlayingScreen(
                         }
                     }
                     IconButton(
-                        onClick = onToggleLike,
+                        onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onToggleLike()
+                        },
                         modifier = Modifier.size(40.dp)
                     ) {
                         Icon(
@@ -645,7 +654,10 @@ fun NowPlayingScreen(
 
                 val playInteraction = remember { MutableInteractionSource() }
                 FilledIconButton(
-                    onClick = effectiveTogglePlayPause,
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        effectiveTogglePlayPause()
+                    },
                     interactionSource = playInteraction,
                     shape = CircleShape,
                     colors = IconButtonDefaults.filledIconButtonColors(
