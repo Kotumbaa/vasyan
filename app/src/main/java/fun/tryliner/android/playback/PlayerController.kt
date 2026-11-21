@@ -83,12 +83,37 @@ class PlayerController(
             }
         }
 
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            if (isRemoteSessionAttached()) return
+            val controller = mediaController ?: return
+            val effective = playWhenReady && controller.playbackState != Player.STATE_ENDED &&
+                controller.playbackState != Player.STATE_IDLE
+            _state.update { it.copy(isPlaying = effective) }
+            if (effective) startPositionTicker() else stopPositionTicker()
+        }
+
+        override fun onDeviceInfoChanged(deviceInfo: DeviceInfo) {
+            if (deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_LOCAL) {
+                val controller = mediaController ?: return
+                val effective = controller.isPlaying ||
+                    (controller.playWhenReady && controller.playbackState == Player.STATE_READY)
+                _state.update { it.copy(isPlaying = effective) }
+                if (effective) startPositionTicker() else stopPositionTicker()
+            }
+        }
+
         override fun onPlaybackStateChanged(playbackState: Int) {
             if (isRemoteSessionAttached()) return
             val buffering = playbackState == Player.STATE_BUFFERING
             _state.update { it.copy(isBuffering = buffering) }
 
             if (playbackState == Player.STATE_READY) {
+                val controller = mediaController
+                if (controller != null) {
+                    val playing = controller.isPlaying || controller.playWhenReady
+                    _state.update { it.copy(isPlaying = playing) }
+                    if (playing) startPositionTicker()
+                }
                 updatePositionFromController()
             } else if (playbackState == Player.STATE_ENDED) {
                 next()
@@ -153,7 +178,9 @@ class PlayerController(
     fun play() {
         val controller = mediaController ?: return
         onBeforeLocalPlayback?.invoke()
-        if (!controller.isPlaying) {
+        _state.update { it.copy(isPlaying = true) }
+        startPositionTicker()
+        if (!controller.playWhenReady || !controller.isPlaying) {
             controller.play()
         }
     }
@@ -161,7 +188,9 @@ class PlayerController(
     fun pause() {
         val controller = mediaController ?: return
         if (isRemoteSessionAttached()) return
-        if (controller.isPlaying) {
+        _state.update { it.copy(isPlaying = false) }
+        stopPositionTicker()
+        if (controller.playWhenReady || controller.isPlaying) {
             controller.pause()
         }
     }
@@ -169,9 +198,14 @@ class PlayerController(
     fun togglePlayPause() {
         val controller = mediaController ?: return
         onBeforeLocalPlayback?.invoke()
-        if (controller.isPlaying) {
+        val currentlyPlaying = _state.value.isPlaying || (!isRemoteSessionAttached() && (controller.isPlaying || controller.playWhenReady))
+        if (currentlyPlaying) {
+            _state.update { it.copy(isPlaying = false) }
+            stopPositionTicker()
             controller.pause()
         } else {
+            _state.update { it.copy(isPlaying = true) }
+            startPositionTicker()
             controller.play()
         }
     }
@@ -222,6 +256,7 @@ class PlayerController(
 
     private fun playIndex(index: Int, initialPositionMs: Long = 0L) {
         val track = _state.value.queue.getOrNull(index) ?: return
+        val wasRapidSkip = resolveJob?.isActive == true
         resolveJob?.cancel()
 
         val clampedInitialPos = initialPositionMs.coerceAtLeast(0L)
@@ -239,6 +274,9 @@ class PlayerController(
         loadLyrics(track)
 
         resolveJob = scope.launch {
+            if (wasRapidSkip) {
+                delay(180L)
+            }
             runCatching {
                 val localUri = downloadManager?.localUriFor(track.id)
                 val now = System.currentTimeMillis()

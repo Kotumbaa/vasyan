@@ -5,6 +5,8 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -17,6 +19,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -63,6 +66,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -84,6 +88,7 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -199,10 +204,39 @@ fun NowPlayingScreen(
         label = "nowPlayingMidColor"
     )
 
+    var dismissOffsetY by remember { mutableFloatStateOf(0f) }
+    val animatedDismissY by animateFloatAsState(
+        targetValue = dismissOffsetY,
+        animationSpec = spring(stiffness = 380f, dampingRatio = 0.85f),
+        label = "nowPlayingDismissY"
+    )
+    val dismissThresholdPx = with(LocalDensity.current) { 110.dp.toPx() }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .graphicsLayer { translationY = animatedDismissY }
             .background(BackdropBase)
+            .pointerInput(showLyrics, onCollapse) {
+                if (!showLyrics) {
+                    detectVerticalDragGestures(
+                        onVerticalDrag = { change, dragAmount ->
+                            val next = (dismissOffsetY + dragAmount).coerceAtLeast(0f)
+                            if (next > 0f || dragAmount > 0f) {
+                                change.consume()
+                                dismissOffsetY = next
+                            }
+                        },
+                        onDragEnd = {
+                            if (dismissOffsetY >= dismissThresholdPx) {
+                                onCollapse()
+                            }
+                            dismissOffsetY = 0f
+                        },
+                        onDragCancel = { dismissOffsetY = 0f }
+                    )
+                }
+            }
     ) {
         // Blurred cover-art ambient layer behind the gradient (matching desktop FullscreenPlayer)
         val blurredBitmap = coverAmbient?.blurredBitmap
@@ -269,7 +303,26 @@ fun NowPlayingScreen(
         ) {
             // Spotify-style top bar: Chevron down | Centered source/album | Download
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .pointerInput(onCollapse) {
+                        detectVerticalDragGestures(
+                            onVerticalDrag = { change, dragAmount ->
+                                val next = (dismissOffsetY + dragAmount).coerceAtLeast(0f)
+                                if (next > 0f || dragAmount > 0f) {
+                                    change.consume()
+                                    dismissOffsetY = next
+                                }
+                            },
+                            onDragEnd = {
+                                if (dismissOffsetY >= dismissThresholdPx) {
+                                    onCollapse()
+                                }
+                                dismissOffsetY = 0f
+                            },
+                            onDragCancel = { dismissOffsetY = 0f }
+                        )
+                    },
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {

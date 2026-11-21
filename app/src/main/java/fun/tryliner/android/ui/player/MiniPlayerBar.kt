@@ -1,10 +1,13 @@
 package `fun`.tryliner.android.ui.player
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,6 +37,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,7 +48,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -136,11 +145,39 @@ fun MiniPlayerBar(
         label = "miniPlayerBg"
     )
 
+    var dragOffsetX by remember { mutableFloatStateOf(0f) }
+    val animatedOffsetX by animateFloatAsState(
+        targetValue = dragOffsetX,
+        animationSpec = spring(stiffness = 400f, dampingRatio = 0.8f),
+        label = "miniPlayerSwipeOffset"
+    )
+    val swipeThresholdPx = with(LocalDensity.current) { 48.dp.toPx() }
+
     Surface(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 8.dp, vertical = 4.dp)
+            .graphicsLayer { translationX = animatedOffsetX }
             .clip(MiniPlayerShape)
+            .pointerInput(mainNext, mainPrevious) {
+                var totalDrag = 0f
+                detectHorizontalDragGestures(
+                    onDragStart = { totalDrag = 0f },
+                    onHorizontalDrag = { change, dragAmount ->
+                        change.consume()
+                        totalDrag += dragAmount
+                        dragOffsetX = (totalDrag * 0.45f).coerceIn(-80f, 80f)
+                    },
+                    onDragEnd = {
+                        when {
+                            totalDrag <= -swipeThresholdPx -> mainNext()
+                            totalDrag >= swipeThresholdPx -> mainPrevious()
+                        }
+                        dragOffsetX = 0f
+                    },
+                    onDragCancel = { dragOffsetX = 0f }
+                )
+            }
             .clickable(onClick = onClick),
         shape = MiniPlayerShape,
         color = spotifyBarBg

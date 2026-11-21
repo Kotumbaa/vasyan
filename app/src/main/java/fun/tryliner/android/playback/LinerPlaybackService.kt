@@ -153,7 +153,7 @@ class LinerPlaybackService : MediaSessionService() {
             local.playbackState == Player.STATE_BUFFERING ||
             isLocalBuffering
 
-        if (!isLocalActive && remoteState?.track != null) {
+        if (!isLocalActive && remoteState?.track != null && remoteState.isPlaying) {
             remote.updateState(remoteState)
             if (session.player !== remote) {
                 session.setPlayer(remote)

@@ -70,9 +70,14 @@ class InnertubeClient(
     @Volatile
     private var visitorData: String? = null
 
+    @Volatile
+    private var visitorDataExpiresAtMs: Long = 0L
+
     companion object {
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
         private val VIDEO_ID_REGEX = Regex("^[a-zA-Z0-9_-]{11}$")
+        private val VISITOR_DATA_REGEX = Regex("""Cg[s-v][A-Za-z0-9_-]{20,}(?:%3D|=){0,2}""")
+        private const val VISITOR_SESSION_TTL_MS = 5L * 60L * 60L * 1000L
         private val ARTWORK_HOST_REGEX =
             Regex("(?:[a-zA-Z0-9_-]+\\.googleusercontent\\.com|yt3\\.ggpht\\.com)", RegexOption.IGNORE_CASE)
         private val YEAR_REGEX = Regex("^\\d{4}$")
@@ -123,9 +128,25 @@ class InnertubeClient(
             ),
         )
 
+        val IOS_PROFILE = InnertubeProfile(
+            clientName = "IOS",
+            clientVersion = "20.10.4",
+            clientIdHeader = "5",
+            origin = "https://www.youtube.com",
+            userAgent = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)",
+            includeUserAgentInContext = true,
+            extraContext = mapOf(
+                "osName" to JsonPrimitive("iPhone"),
+                "osVersion" to JsonPrimitive("18.3.2.22D82"),
+                "deviceMake" to JsonPrimitive("Apple"),
+                "deviceModel" to JsonPrimitive("iPhone16,2"),
+            ),
+        )
+
         val PLAYBACK_PROFILES: List<InnertubeProfile> = listOf(
-            ANDROID_VR_PROFILE,
             VISIONOS_PROFILE,
+            ANDROID_VR_PROFILE,
+            IOS_PROFILE,
         )
 
         fun toVideoId(trackId: String): String? {
@@ -231,25 +252,72 @@ class InnertubeClient(
         val videoId = toVideoId(trackId)
             ?: throw InnertubeException("Track $trackId is not a YouTube video.", 400)
 
-        val profiles = orderedProfiles()
-        val failures = mutableListOf<String>()
-        var refusedCount = 0
+        ensureVisitorData(forceRefresh = false)
 
-        for (profile in profiles) {
-            try {
-                val stream = resolveWithProfile(videoId, profile, preferredCodec, verifyReachable)
-                lastWorkingProfile = profile
-                return stream
-            } catch (err: InnertubeException) {
-                if (err.status == 403) refusedCount++
-                failures.add("${profile.clientName}: ${err.message}")
-            } catch (err: Exception) {
-                failures.add("${profile.clientName}: ${err.message ?: err::class.simpleName}")
+        val failures = mutableListOf<String>()
+        var lastRefusedAll = false
+
+        // Up to 2 passes: if pass 1 fails across all profiles, refresh authentic visitorData
+        // from sw.js_data (matching desktop visitorSession.ts) and retry once.
+        for (pass in 0..1) {
+            if (pass == 1) {
+                lastWorkingProfile = null
+                ensureVisitorData(forceRefresh = true)
             }
+            val profiles = orderedProfiles()
+            var refusedCount = 0
+
+            for (profile in profiles) {
+                try {
+                    val stream = resolveWithProfile(videoId, profile, preferredCodec, verifyReachable)
+                    lastWorkingProfile = profile
+                    return stream
+                } catch (err: InnertubeException) {
+                    if (err.status == 403) refusedCount++
+                    failures.add("${profile.clientName}: ${err.message}")
+                } catch (err: Exception) {
+                    failures.add("${profile.clientName}: ${err.message ?: err::class.simpleName}")
+                }
+            }
+            lastRefusedAll = profiles.isNotEmpty() && refusedCount == profiles.size
         }
 
-        val status = if (profiles.isNotEmpty() && refusedCount == profiles.size) 403 else 502
+        val status = if (lastRefusedAll) 403 else 502
         throw InnertubeException("Direct audio resolution failed (${failures.joinToString("; ")}).", status)
+    }
+
+    /**
+     * Port of desktop `visitorSession.ts`: fetches authentic `visitorData` from
+     * `https://www.youtube.com/sw.js_data` so YouTube doesn't flag anonymous requests as bots.
+     */
+    private suspend fun ensureVisitorData(forceRefresh: Boolean) {
+        val now = System.currentTimeMillis()
+        if (!forceRefresh && !visitorData.isNullOrBlank() && visitorDataExpiresAtMs > now) {
+            return
+        }
+        if (forceRefresh) {
+            visitorData = null
+            visitorDataExpiresAtMs = 0L
+        }
+        runCatching {
+            val req = Request.Builder()
+                .url("https://www.youtube.com/sw.js_data")
+                .header(
+                    "User-Agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                )
+                .get()
+                .build()
+            httpClient.newCall(req).await().use { res ->
+                if (!res.isSuccessful) return
+                val text = res.body?.string().orEmpty()
+                val parsed = VISITOR_DATA_REGEX.find(text)?.value
+                if (!parsed.isNullOrBlank()) {
+                    visitorData = parsed
+                    visitorDataExpiresAtMs = System.currentTimeMillis() + VISITOR_SESSION_TTL_MS
+                }
+            }
+        }
     }
 
     private suspend fun resolveWithProfile(
@@ -265,7 +333,7 @@ class InnertubeClient(
         }
         var response = postInnertube("player", body, profile)
         if (requiresBotCheck(response)) {
-            visitorData = null
+            ensureVisitorData(forceRefresh = true)
             response = postInnertube("player", body, profile)
         }
         val playabilityErr = playabilityError(response)
