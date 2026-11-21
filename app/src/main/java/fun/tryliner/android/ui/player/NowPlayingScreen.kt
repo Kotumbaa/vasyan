@@ -235,33 +235,7 @@ fun NowPlayingScreen(
             .fillMaxSize()
             .background(BackdropBase)
             .pointerInput(showLyrics, onCollapse, onDragDelta, onDragRelease) {
-                if (isRemoteMode && lanConnectManager != null && remoteState != null) {
-                Spacer(modifier = Modifier.height(6.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.VolumeUp,
-                        contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.72f),
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Slider(
-                        value = remoteState.volume.coerceIn(0f, 1f),
-                        onValueChange = { v -> lanConnectManager.setRemoteVolume(v) },
-                        colors = SliderDefaults.colors(
-                            thumbColor = Color.White,
-                            activeTrackColor = Color.White,
-                            inactiveTrackColor = Color.White.copy(alpha = 0.22f)
-                        ),
-                        modifier = Modifier.weight(1f).height(24.dp)
-                    )
-                }
-            }
-
-            if (!showLyrics) {
+                if (!showLyrics) {
                     val velocityTracker = VelocityTracker()
                     detectVerticalDragGestures(
                         onDragStart = {
