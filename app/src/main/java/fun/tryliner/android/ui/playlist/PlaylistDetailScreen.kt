@@ -41,6 +41,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -183,7 +184,7 @@ fun PlaylistDetailScreen(
                             top = 4.dp,
                             bottom = listBottomPadding
                         ),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                        verticalArrangement = Arrangement.spacedBy(0.dp)
                     ) {
                         item(key = "hero_header") {
                             EntityHeroHeader(
@@ -210,19 +211,39 @@ fun PlaylistDetailScreen(
                                 }
                             }
                         } else {
+                            val total = state.tracks.size
                             itemsIndexed(
                                 items = state.tracks,
                                 key = { index, track -> "${index}_${track.id}" }
                             ) { index, track ->
                                 val isLiked = likedIds.contains(track.id)
                                 val isPlayingCurrent = playbackState.currentTrack?.id == track.id
-                                TrackRow(
-                                    track = track,
-                                    isLiked = isLiked,
-                                    isPlayingCurrent = isPlayingCurrent,
-                                    onClick = { viewModel.playTrackAt(index) },
-                                    onToggleLike = { viewModel.toggleLike(track) }
-                                )
+                                val panelShape = when {
+                                    total == 1 -> LinerShapes.Item
+                                    index == 0 -> RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
+                                    index == total - 1 -> RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp)
+                                    else -> RoundedCornerShape(0.dp)
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(panelShape)
+                                        .background(LinerColors.FillSubtle)
+                                        .padding(
+                                            start = 4.dp,
+                                            end = 4.dp,
+                                            top = if (index == 0) 4.dp else 0.dp,
+                                            bottom = if (index == total - 1) 4.dp else 0.dp
+                                        )
+                                ) {
+                                    TrackRow(
+                                        track = track,
+                                        isLiked = isLiked,
+                                        isPlayingCurrent = isPlayingCurrent,
+                                        onClick = { viewModel.playTrackAt(index) },
+                                        onToggleLike = { viewModel.toggleLike(track) }
+                                    )
+                                }
                             }
                         }
                     }
@@ -298,13 +319,19 @@ private fun EntityHeroHeader(
                 } else {
                     ""
                 }
-                Text(
-                    text = "${state.tracks.size} tracks$durationText",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = LinerColors.TextTertiary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Surface(
+                    shape = LinerShapes.HeroButton,
+                    color = LinerColors.HeroGlass
+                ) {
+                    Text(
+                        text = "${state.tracks.size} tracks$durationText",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = LinerColors.TextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    )
+                }
             }
         }
 
@@ -454,16 +481,18 @@ private fun PlaylistDownloadButton(
     if (confirmDeleteAll) {
         AlertDialog(
             onDismissRequest = { confirmDeleteAll = false },
-            title = { Text("Удалить загрузки плейлиста?") },
-            text = { Text("Все скачанные треки из этого плейлиста (${tracks.size}) будут удалены с устройства.") },
+            title = { Text(stringResource(R.string.delete_playlist_downloads_title)) },
+            text = { Text(stringResource(R.string.delete_playlist_downloads_message, tracks.size)) },
             confirmButton = {
                 TextButton(onClick = {
                     confirmDeleteAll = false
                     tracks.forEach { manager.delete(it.id) }
-                }) { Text("Удалить") }
+                }) { Text(stringResource(R.string.action_delete)) }
             },
             dismissButton = {
-                TextButton(onClick = { confirmDeleteAll = false }) { Text("Отмена") }
+                TextButton(onClick = { confirmDeleteAll = false }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
             }
         )
     }

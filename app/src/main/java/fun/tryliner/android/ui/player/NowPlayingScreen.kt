@@ -369,7 +369,9 @@ fun NowPlayingScreen(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        text = if (isRemoteMode) "ИГРАЕТ НА ПК" else "СЕЙЧАС ИГРАЕТ",
+                        text = stringResource(
+                            if (isRemoteMode) R.string.now_playing_remote_header else R.string.now_playing_header
+                        ),
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontSize = 10.sp,
                             letterSpacing = 0.8.sp,
@@ -534,7 +536,7 @@ fun NowPlayingScreen(
                             contentDescription = stringResource(
                                 if (isLiked) R.string.cd_unlike else R.string.cd_like
                             ),
-                            tint = if (isLiked) Color(0xFF1ED760) else Color.White.copy(alpha = 0.75f),
+                            tint = if (isLiked) LinerColors.AccentRed else Color.White.copy(alpha = 0.75f),
                             modifier = Modifier
                                 .size(26.dp)
                                 .graphicsLayer {
@@ -720,7 +722,9 @@ fun NowPlayingScreen(
                         -1
                     }
                 }
-                val previewPair: Pair<String, String?> = remember(lyr, activeIdx, playbackState.isLyricsLoading) {
+                val loadingText = stringResource(R.string.lyrics_loading)
+                val tapText = stringResource(R.string.lyrics_preview_tap)
+                val previewPair: Pair<String, String?> = remember(lyr, activeIdx, playbackState.isLyricsLoading, loadingText, tapText) {
                     when {
                         lyr != null && lyr.lines.isNotEmpty() && activeIdx >= 0 -> {
                             val current = lyr.lines.getOrNull(activeIdx)?.text.orEmpty()
@@ -731,8 +735,8 @@ fun NowPlayingScreen(
                             val plain = lyr?.plainText?.lines()?.filter { it.isNotBlank() }.orEmpty()
                             (plain.firstOrNull() ?: "") to plain.getOrNull(1)
                         }
-                        playbackState.isLyricsLoading -> "Загрузка текста..." to null
-                        else -> "Нажмите, чтобы открыть текст" to null
+                        playbackState.isLyricsLoading -> loadingText to null
+                        else -> tapText to null
                     }
                 }
                 val desktopEase = LinerMotion.EaseOut
@@ -746,7 +750,7 @@ fun NowPlayingScreen(
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
                     ) {
                         Text(
-                            text = "Предпросмотр текста",
+                            text = stringResource(R.string.lyrics_preview_title),
                             style = MaterialTheme.typography.labelLarge.copy(
                                 fontWeight = FontWeight.Bold
                             ),

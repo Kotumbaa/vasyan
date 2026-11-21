@@ -13,4 +13,18 @@
     <string name="cd_lyrics">Lyrics</string>
     <string name="cd_shuffle">Shuffle</string>
     <string name="cd_clear">Clear</string>
+    <string name="downloads_title">Downloads</string>
+    <string name="downloads_shuffle">Shuffle</string>
+    <string name="downloads_play">Play</string>
+    <string name="now_playing_header">NOW PLAYING</string>
+    <string name="now_playing_remote_header">PLAYING ON PC</string>
+    <string name="lyrics_preview_title">Lyrics preview</string>
+    <string name="lyrics_preview_tap">Tap to open lyrics</string>
+    <string name="lyrics_loading">Loading lyrics...</string>
+    <string name="delete_download_title">Remove download?</string>
+    <string name="delete_download_message">“%1$s” will be removed from this device.</string>
+    <string name="delete_playlist_downloads_title">Remove playlist downloads?</string>
+    <string name="delete_playlist_downloads_message">All downloaded tracks from this playlist (%1$d) will be removed from this device.</string>
+    <string name="action_delete">Remove</string>
+    <string name="action_cancel">Cancel</string>
 </resources>

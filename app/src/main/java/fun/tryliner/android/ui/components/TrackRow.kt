@@ -272,16 +272,18 @@ fun DownloadButton(
     if (confirmDelete) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
-            title = { Text("Удалить загрузку?") },
-            text = { Text("«${track.title}» будет удалён с устройства.") },
+            title = { Text(stringResource(R.string.delete_download_title)) },
+            text = { Text(stringResource(R.string.delete_download_message, track.title)) },
             confirmButton = {
                 TextButton(onClick = {
                     confirmDelete = false
                     manager.delete(track.id)
-                }) { Text("Удалить") }
+                }) { Text(stringResource(R.string.action_delete)) }
             },
             dismissButton = {
-                TextButton(onClick = { confirmDelete = false }) { Text("Отмена") }
+                TextButton(onClick = { confirmDelete = false }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
             }
         )
     }

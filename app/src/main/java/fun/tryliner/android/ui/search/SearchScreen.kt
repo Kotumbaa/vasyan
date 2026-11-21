@@ -45,6 +45,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -151,24 +152,26 @@ fun SearchScreen(
             },
             leadingIcon = {
                 Icon(
-                    imageVector = Icons.Rounded.Search,
+                    painter = painterResource(R.drawable.ic_mgc_search_line),
                     contentDescription = null,
-                    tint = Color.White.copy(alpha = 0.55f)
+                    tint = Color.White.copy(alpha = 0.55f),
+                    modifier = Modifier.size(18.dp)
                 )
             },
             trailingIcon = {
                 if (state.query.isNotEmpty()) {
                     IconButton(onClick = viewModel::clearQuery) {
                         Icon(
-                            imageVector = Icons.Rounded.Clear,
+                            painter = painterResource(R.drawable.ic_mgc_close_line),
                             contentDescription = stringResource(R.string.cd_clear),
-                            tint = Color.White.copy(alpha = 0.55f)
+                            tint = Color.White.copy(alpha = 0.55f),
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }
             },
             singleLine = true,
-            shape = RoundedCornerShape(999.dp),
+            shape = LinerShapes.Item,
             colors = OutlinedTextFieldDefaults.colors(
                 focusedBorderColor = Color.Transparent,
                 unfocusedBorderColor = Color.Transparent,
@@ -195,7 +198,7 @@ fun SearchScreen(
                 val isSelected = selectedFilter == filter
                 Surface(
                     onClick = { selectedFilter = filter },
-                    shape = RoundedCornerShape(999.dp),
+                    shape = LinerShapes.Control,
                     color = if (isSelected) Color(0xFFFFFFFF) else Color.White.copy(alpha = 0.08f)
                 ) {
                     Text(

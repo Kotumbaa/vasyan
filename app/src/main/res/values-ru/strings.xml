@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">vasyan</string>
+    <string name="playback_notification_channel_name">Воспроизведение</string>
+    <string name="playback_notification_channel_description">Управление воспроизведением</string>
+    <string name="cd_play">Воспроизвести</string>
+    <string name="cd_pause">Пауза</string>
+    <string name="cd_next">Следующий трек</string>
+    <string name="cd_previous">Предыдущий трек</string>
+    <string name="cd_like">Нравится</string>
+    <string name="cd_unlike">Убрать лайк</string>
+    <string name="cd_back">Назад</string>
+    <string name="cd_lyrics">Текст песни</string>
+    <string name="cd_shuffle">Перемешать</string>
+    <string name="cd_clear">Очистить</string>
+    <string name="downloads_title">Скачанные</string>
+    <string name="downloads_shuffle">Перемешать</string>
+    <string name="downloads_play">Слушать</string>
+    <string name="now_playing_header">СЕЙЧАС ИГРАЕТ</string>
+    <string name="now_playing_remote_header">ИГРАЕТ НА ПК</string>
+    <string name="lyrics_preview_title">Предпросмотр текста</string>
+    <string name="lyrics_preview_tap">Нажмите, чтобы открыть текст</string>
+    <string name="lyrics_loading">Загрузка текста…</string>
+    <string name="delete_download_title">Удалить загрузку?</string>
+    <string name="delete_download_message">«%1$s» будет удалён с устройства.</string>
+    <string name="delete_playlist_downloads_title">Удалить загрузки плейлиста?</string>
+    <string name="delete_playlist_downloads_message">Все скачанные треки из этого плейлиста (%1$d) будут удалены с устройства.</string>
+    <string name="action_delete">Удалить</string>
+    <string name="action_cancel">Отмена</string>
+</resources>

@@ -314,7 +314,7 @@ fun LibraryScreen(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     Text(
-                                        text = "Скачанные",
+                                        text = stringResource(R.string.downloads_title),
                                         style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                                         color = LinerColors.TextPrimary
                                     )
@@ -324,7 +324,7 @@ fun LibraryScreen(
                                     IconButton(onClick = { viewModel.playDownloaded(0, shuffle = true) }) {
                                         Icon(
                                             painter = painterResource(R.drawable.ic_solar_shuffle),
-                                            contentDescription = "Перемешать",
+                                            contentDescription = stringResource(R.string.downloads_shuffle),
                                             tint = Color.White.copy(alpha = 0.8f),
                                             modifier = Modifier.size(20.dp)
                                         )
@@ -332,7 +332,7 @@ fun LibraryScreen(
                                     IconButton(onClick = { viewModel.playDownloaded(0) }) {
                                         Icon(
                                             painter = painterResource(R.drawable.ic_solar_play),
-                                            contentDescription = "Слушать",
+                                            contentDescription = stringResource(R.string.downloads_play),
                                             tint = Color.White.copy(alpha = 0.8f),
                                             modifier = Modifier.size(18.dp)
                                         )
@@ -340,18 +340,38 @@ fun LibraryScreen(
                                 }
                             }
                         }
+                        val dlTotal = downloadedTracks.size
                         itemsIndexed(
                             items = downloadedTracks,
                             key = { index, track -> "downloaded_${track.id}_$index" }
                         ) { index, track ->
-                            TrackRow(
-                                track = track,
-                                isLiked = likedIds.contains(track.id),
-                                isPlayingCurrent = currentTrackId == track.id,
-                                onClick = { viewModel.playDownloaded(index) },
-                                onToggleLike = { viewModel.toggleLike(track) },
-                                modifier = Modifier.padding(horizontal = 4.dp)
-                            )
+                            val panelShape = when {
+                                dlTotal == 1 -> LinerShapes.Item
+                                index == 0 -> RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
+                                index == dlTotal - 1 -> RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp)
+                                else -> RoundedCornerShape(0.dp)
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp)
+                                    .clip(panelShape)
+                                    .background(LinerColors.FillSubtle)
+                                    .padding(
+                                        start = 4.dp,
+                                        end = 4.dp,
+                                        top = if (index == 0) 4.dp else 0.dp,
+                                        bottom = if (index == dlTotal - 1) 4.dp else 0.dp
+                                    )
+                            ) {
+                                TrackRow(
+                                    track = track,
+                                    isLiked = likedIds.contains(track.id),
+                                    isPlayingCurrent = currentTrackId == track.id,
+                                    onClick = { viewModel.playDownloaded(index) },
+                                    onToggleLike = { viewModel.toggleLike(track) }
+                                )
+                            }
                         }
                     }
 
@@ -422,18 +442,38 @@ fun LibraryScreen(
                                 }
                             }
                         } else {
+                            val likedTotal = filteredLikedTracks.size
                             itemsIndexed(
                                 items = filteredLikedTracks,
                                 key = { index, track -> "liked_${track.id}_$index" }
-                            ) { _, track ->
-                                TrackRow(
-                                    track = track,
-                                    isLiked = likedIds.contains(track.id),
-                                    isPlayingCurrent = currentTrackId == track.id,
-                                    onClick = { viewModel.playLikedTrack(track) },
-                                    onToggleLike = { viewModel.toggleLike(track) },
-                                    modifier = Modifier.padding(horizontal = 4.dp)
-                                )
+                            ) { index, track ->
+                                val panelShape = when {
+                                    likedTotal == 1 -> LinerShapes.Item
+                                    index == 0 -> RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
+                                    index == likedTotal - 1 -> RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp)
+                                    else -> RoundedCornerShape(0.dp)
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp)
+                                        .clip(panelShape)
+                                        .background(LinerColors.FillSubtle)
+                                        .padding(
+                                            start = 4.dp,
+                                            end = 4.dp,
+                                            top = if (index == 0) 4.dp else 0.dp,
+                                            bottom = if (index == likedTotal - 1) 4.dp else 0.dp
+                                        )
+                                ) {
+                                    TrackRow(
+                                        track = track,
+                                        isLiked = likedIds.contains(track.id),
+                                        isPlayingCurrent = currentTrackId == track.id,
+                                        onClick = { viewModel.playLikedTrack(track) },
+                                        onToggleLike = { viewModel.toggleLike(track) }
+                                    )
+                                }
                             }
                         }
                     }
@@ -525,7 +565,7 @@ private fun PlaylistSearchPill(
         },
         leadingIcon = {
             Icon(
-                imageVector = Icons.Rounded.Search,
+                painter = painterResource(R.drawable.ic_mgc_search_line),
                 contentDescription = null,
                 tint = Color.White.copy(alpha = 0.55f),
                 modifier = Modifier.size(18.dp)
@@ -548,7 +588,7 @@ private fun PlaylistSearchPill(
                         modifier = Modifier.size(32.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Rounded.Clear,
+                            painter = painterResource(R.drawable.ic_mgc_close_line),
                             contentDescription = stringResource(R.string.cd_clear),
                             tint = Color.White.copy(alpha = 0.55f),
                             modifier = Modifier.size(16.dp)
@@ -558,7 +598,7 @@ private fun PlaylistSearchPill(
             }
         },
         singleLine = true,
-        shape = RoundedCornerShape(999.dp),
+        shape = LinerShapes.Item,
         colors = OutlinedTextFieldDefaults.colors(
             focusedBorderColor = Color.Transparent,
             unfocusedBorderColor = Color.Transparent,

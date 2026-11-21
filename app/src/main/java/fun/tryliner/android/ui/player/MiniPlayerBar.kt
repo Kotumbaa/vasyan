@@ -284,7 +284,7 @@ fun MiniPlayerBar(
                                 if (isLiked) R.drawable.ic_mgc_heart_fill else R.drawable.ic_mgc_heart_line
                             ),
                             contentDescription = stringResource(if (isLiked) R.string.cd_unlike else R.string.cd_like),
-                            tint = if (isLiked) Color(0xFF1ED760) else Color.White.copy(alpha = 0.72f),
+                            tint = if (isLiked) LinerColors.AccentRed else Color.White.copy(alpha = 0.72f),
                             modifier = Modifier
                                 .size(20.dp)
                                 .graphicsLayer {
