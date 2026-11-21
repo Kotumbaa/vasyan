@@ -57,7 +57,8 @@ data class RemotePlaybackState(
     val durationMs: Long,
     val updatedAt: Long,
     val track: RemoteTrack?,
-    val volume: Float = 1f
+    val volume: Float = 1f,
+    val isSlave: Boolean = false
 )
 
 @Serializable
@@ -89,7 +90,8 @@ private data class LanStateMessage(
     val durationMs: Long,
     val updatedAt: Long,
     val track: RemoteTrack? = null,
-    val volume: Float = 1f
+    val volume: Float = 1f,
+    val isSlave: Boolean = false
 )
 
 @Serializable
@@ -98,6 +100,9 @@ private data class LanCommandMessage(
     val action: String,
     val positionMs: Long? = null,
     val track: RemoteTrack? = null,
+    val queue: List<RemoteTrack>? = null,
+    val startIndex: Int? = null,
+    val shuffle: Boolean? = null,
     val volume: Float? = null
 )
 
@@ -106,7 +111,7 @@ class LanConnectManager(
     private val sessionFlow: StateFlow<AuthSession?>,
     private val playerController: PlayerController,
     private val scope: CoroutineScope
-) {
+) : RemotePlaybackBridge {
     private val appContext = context.applicationContext
 
     @OptIn(ExperimentalSerializationApi::class)
@@ -146,6 +151,16 @@ class LanConnectManager(
     private val _isConnected = MutableStateFlow(false)
     val isConnected: StateFlow<Boolean> = _isConnected.asStateFlow()
 
+    private val _isLocalSlave = MutableStateFlow(false)
+    val isLocalSlave: StateFlow<Boolean> = _isLocalSlave.asStateFlow()
+
+    @Volatile
+    private var lastLocalClaimAtMs: Long = 0L
+
+    init {
+        playerController.remoteBridge = this
+    }
+
     private val wsLock = Any()
     private var activeWebSocket: WebSocket? = null
     private var connectingPeerKey: String? = null
@@ -172,10 +187,46 @@ class LanConnectManager(
         }
     }
 
+    override fun isControllingRemoteSlave(): Boolean {
+        val remote = _remoteState.value ?: return false
+        return _isConnected.value && !_isLocalSlave.value && (remote.isSlave || remote.isPlaying)
+    }
+
+    override fun onLocalPlaybackClaimed() {
+        _isLocalSlave.value = true
+        lastLocalClaimAtMs = System.currentTimeMillis()
+    }
+
+    override fun playQueueOnSlave(
+        tracks: List<Track>,
+        startIndex: Int,
+        shuffle: Boolean,
+        initialPositionMs: Long
+    ) {
+        val picked = tracks.getOrNull(startIndex) ?: tracks.firstOrNull() ?: return
+        val remoteQueue = tracks.take(50).map { it.toRemoteTrack() }
+        val clampedIndex = startIndex.coerceIn(0, (remoteQueue.size - 1).coerceAtLeast(0))
+        sendCommand(
+            action = "play",
+            positionMs = initialPositionMs.takeIf { it > 0L },
+            track = picked.toRemoteTrack(),
+            queue = remoteQueue,
+            startIndex = clampedIndex,
+            shuffle = shuffle
+        )
+    }
+
+    override fun sendSlaveCommand(action: String, positionMs: Long?, volume: Float?) {
+        sendCommand(action = action, positionMs = positionMs, volume = volume)
+    }
+
     fun sendCommand(
         action: String,
         positionMs: Long? = null,
         track: RemoteTrack? = null,
+        queue: List<RemoteTrack>? = null,
+        startIndex: Int? = null,
+        shuffle: Boolean? = null,
         volume: Float? = null
     ) {
         val ws = synchronized(wsLock) { activeWebSocket } ?: return
@@ -184,6 +235,9 @@ class LanConnectManager(
                 action = action,
                 positionMs = positionMs,
                 track = track,
+                queue = queue,
+                startIndex = startIndex,
+                shuffle = shuffle,
                 volume = volume
             )
         )
@@ -201,39 +255,27 @@ class LanConnectManager(
     fun handoffToPhone() {
         val remote = _remoteState.value ?: return
         val remoteTrack = remote.track ?: return
+        onLocalPlaybackClaimed()
         sendCommand(action = "handoff")
-        val track = Track(
-            id = remoteTrack.id,
-            title = remoteTrack.title,
-            artists = if (remoteTrack.artist.isBlank()) {
-                emptyList()
-            } else {
-                listOf(TrackArtist(id = "", name = remoteTrack.artist))
-            },
-            durationMs = remoteTrack.durationMs,
-            cover = remoteTrack.coverUrl?.takeIf { it.isNotBlank() }?.let {
-                Cover(url = it, width = 0, height = 0)
-            }
+        playerController.playSingle(
+            remoteTrack.toTrack(),
+            initialPositionMs = remote.positionMs,
+            forceLocal = true
         )
-        playerController.playSingle(track, initialPositionMs = remote.positionMs)
+        synchronized(wsLock) { activeWebSocket }?.let { sendCurrentState(it) }
     }
 
     fun handoffToRemote() {
         val state = playerController.state.value
         val currentTrack = state.currentTrack ?: return
-        val remoteTrack = RemoteTrack(
-            id = currentTrack.id,
-            title = currentTrack.title,
-            artist = currentTrack.artistNames,
-            coverUrl = currentTrack.cover?.url,
-            durationMs = currentTrack.durationMs
-        )
+        _isLocalSlave.value = false
         sendCommand(
             action = "handoff",
             positionMs = state.positionMs,
-            track = remoteTrack
+            track = currentTrack.toRemoteTrack()
         )
-        playerController.pause()
+        playerController.pauseLocal()
+        synchronized(wsLock) { activeWebSocket }?.let { sendCurrentState(it) }
     }
 
     fun release() {
@@ -419,6 +461,10 @@ class LanConnectManager(
             "state" -> {
                 val stateMsg = runCatching { json.decodeFromString<LanStateMessage>(text) }.getOrNull() ?: return
                 if (stateMsg.deviceId == deviceId) return
+                val peerIsSlave = stateMsg.isSlave || stateMsg.isPlaying
+                if (peerIsSlave && !playerController.state.value.isPlaying && stateMsg.updatedAt > lastLocalClaimAtMs) {
+                    _isLocalSlave.value = false
+                }
                 _remoteState.value = RemotePlaybackState(
                     deviceId = stateMsg.deviceId,
                     deviceName = stateMsg.deviceName,
@@ -428,7 +474,8 @@ class LanConnectManager(
                     durationMs = stateMsg.durationMs,
                     updatedAt = stateMsg.updatedAt,
                     track = stateMsg.track,
-                    volume = stateMsg.volume.coerceIn(0f, 1f)
+                    volume = stateMsg.volume.coerceIn(0f, 1f),
+                    isSlave = peerIsSlave
                 )
                 if (stateMsg.track != null) {
                     scope.launch(Dispatchers.Main.immediate) {
@@ -440,13 +487,73 @@ class LanConnectManager(
                 val cmd = runCatching { json.decodeFromString<LanCommandMessage>(text) }.getOrNull() ?: return
                 scope.launch(Dispatchers.Main.immediate) {
                     when (cmd.action) {
-                        "play" -> playerController.play()
-                        "pause" -> playerController.pause()
-                        "toggle" -> playerController.togglePlayPause()
-                        "next" -> playerController.next()
-                        "prev" -> playerController.previous()
-                        "seek" -> cmd.positionMs?.let { playerController.seekTo(it) }
-                        "handoff" -> playerController.pause()
+                        "play" -> {
+                            onLocalPlaybackClaimed()
+                            val queue = cmd.queue
+                            val track = cmd.track
+                            when {
+                                !queue.isNullOrEmpty() -> playerController.playQueue(
+                                    tracks = queue.map { it.toTrack() },
+                                    startIndex = cmd.startIndex ?: 0,
+                                    shuffle = cmd.shuffle ?: false,
+                                    initialPositionMs = cmd.positionMs ?: 0L,
+                                    forceLocal = true
+                                )
+                                track != null -> playerController.playSingle(
+                                    track = track.toTrack(),
+                                    initialPositionMs = cmd.positionMs ?: 0L,
+                                    forceLocal = true
+                                )
+                                else -> playerController.playLocal()
+                            }
+                        }
+                        "pause" -> playerController.pauseLocal()
+                        "toggle" -> {
+                            if (playerController.state.value.isPlaying) {
+                                playerController.pauseLocal()
+                            } else {
+                                onLocalPlaybackClaimed()
+                                playerController.playLocal()
+                            }
+                        }
+                        "next" -> {
+                            val current = playerController.state.value
+                            val nextIndex = current.currentIndex + 1
+                            if (nextIndex <= current.queue.lastIndex) {
+                                playerController.playQueue(current.queue, startIndex = nextIndex, forceLocal = true)
+                            }
+                        }
+                        "prev" -> {
+                            val current = playerController.state.value
+                            if (current.positionMs > 3000L) {
+                                playerController.seekTo(0L)
+                            } else if (current.queue.isNotEmpty()) {
+                                val prevIndex = (current.currentIndex - 1).coerceAtLeast(0)
+                                playerController.playQueue(current.queue, startIndex = prevIndex, forceLocal = true)
+                            }
+                        }
+                        "seek" -> cmd.positionMs?.let { pos ->
+                            playerController.seekLocal(pos)
+                        }
+                        "setVolume" -> cmd.volume?.let { vol ->
+                            playerController.setLocalVolume(vol)
+                            synchronized(wsLock) { activeWebSocket }?.let { sendCurrentState(it) }
+                        }
+                        "handoff" -> {
+                            val track = cmd.track
+                            if (track != null) {
+                                onLocalPlaybackClaimed()
+                                playerController.playSingle(
+                                    track.toTrack(),
+                                    initialPositionMs = cmd.positionMs ?: 0L,
+                                    forceLocal = true
+                                )
+                            } else {
+                                _isLocalSlave.value = false
+                                playerController.pauseLocal()
+                                synchronized(wsLock) { activeWebSocket }?.let { sendCurrentState(it) }
+                            }
+                        }
                     }
                 }
             }
@@ -518,10 +625,32 @@ class LanConnectManager(
             positionMs = playback.positionMs,
             durationMs = playback.durationMs,
             updatedAt = System.currentTimeMillis(),
-            track = remoteTrack
+            track = remoteTrack,
+            volume = playerController.getLocalVolume(),
+            isSlave = _isLocalSlave.value
         )
         webSocket.send(json.encodeToString(msg))
     }
+
+    private fun Track.toRemoteTrack(): RemoteTrack = RemoteTrack(
+        id = id,
+        title = title,
+        artist = artistNames,
+        coverUrl = cover?.url ?: cover?.fallbackUrl,
+        durationMs = durationMs
+    )
+
+    private fun RemoteTrack.toTrack(): Track = Track(
+        id = id,
+        title = title,
+        artists = if (artist.isBlank()) {
+            emptyList()
+        } else {
+            listOf(TrackArtist(id = "", name = artist))
+        },
+        durationMs = durationMs,
+        cover = coverUrl?.takeIf { it.isNotBlank() }?.let { Cover(url = it, width = 0, height = 0) }
+    )
 
     private fun clearWebSocketIfMatches(webSocket: WebSocket) {
         var cleared = false

@@ -96,7 +96,7 @@ fun MiniPlayerBar(
     if (localTrack == null && activeRemote == null) return
 
     val showRemoteAsMain = activeRemote != null &&
-        (localTrack == null || (!playbackState.isPlaying && activeRemote.isPlaying))
+        (localTrack == null || activeRemote.isSlave || (!playbackState.isPlaying && activeRemote.isPlaying))
 
     val title: String
     val artist: String

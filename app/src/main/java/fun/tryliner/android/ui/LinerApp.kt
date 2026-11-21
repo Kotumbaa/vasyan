@@ -113,13 +113,14 @@ private fun LinerAppContent(container: AppContainer) {
 
         val playbackState by container.playerController.state.collectAsStateWithLifecycle()
         val remoteState by container.lanConnectManager.remoteState.collectAsStateWithLifecycle()
+        val isLocalSlave by container.lanConnectManager.isLocalSlave.collectAsStateWithLifecycle()
         val likedIds by container.likedTrackIds.collectAsStateWithLifecycle()
         var isNowPlayingOpen by rememberSaveable { mutableStateOf(false) }
 
         val currentTrack = playbackState.currentTrack
         val isCurrentTrackLiked = currentTrack != null && likedIds.contains(currentTrack.id)
         val activeRemote = remoteState?.takeIf { remote ->
-            remote.track != null && (remote.isPlaying || !playbackState.isPlaying)
+            remote.track != null && !isLocalSlave && (remote.isSlave || remote.isPlaying)
         }
 
         val activeCoverUrl = currentTrack?.cover?.url

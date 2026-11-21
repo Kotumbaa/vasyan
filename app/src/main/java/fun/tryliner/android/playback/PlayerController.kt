@@ -2,6 +2,7 @@ package `fun`.tryliner.android.playback
 
 import android.content.ComponentName
 import android.content.Context
+import android.media.AudioManager
 import android.net.Uri
 import androidx.media3.common.DeviceInfo
 import androidx.media3.common.MediaItem
@@ -32,6 +33,18 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+interface RemotePlaybackBridge {
+    fun isControllingRemoteSlave(): Boolean
+    fun onLocalPlaybackClaimed()
+    fun playQueueOnSlave(
+        tracks: List<Track>,
+        startIndex: Int,
+        shuffle: Boolean,
+        initialPositionMs: Long
+    )
+    fun sendSlaveCommand(action: String, positionMs: Long? = null, volume: Float? = null)
+}
+
 data class PlaybackUiState(
     val queue: List<Track> = emptyList(),
     val currentIndex: Int = -1,
@@ -59,6 +72,9 @@ class PlayerController(
 
     /** Set by AppContainer; when a track is downloaded, playback uses the local file. */
     var downloadManager: TrackDownloadManager? = null
+
+    /** Set by LanConnectManager; routes playback/controls to active Slave when this device is Master. */
+    var remoteBridge: RemotePlaybackBridge? = null
 
     private var mediaController: MediaController? = null
     private var resolveJob: Job? = null
@@ -148,9 +164,15 @@ class PlayerController(
         tracks: List<Track>,
         startIndex: Int = 0,
         shuffle: Boolean = false,
-        initialPositionMs: Long = 0L
+        initialPositionMs: Long = 0L,
+        forceLocal: Boolean = false,
     ) {
         if (tracks.isEmpty()) return
+        if (!forceLocal && remoteBridge?.isControllingRemoteSlave() == true) {
+            remoteBridge?.playQueueOnSlave(tracks, startIndex, shuffle, initialPositionMs)
+            return
+        }
+        remoteBridge?.onLocalPlaybackClaimed()
         val ordered = if (shuffle) {
             val picked = tracks.getOrNull(startIndex)
             val rest = tracks.filterIndexed { index, _ -> index != startIndex }.shuffled()
@@ -171,11 +193,17 @@ class PlayerController(
         playIndex(targetIndex, initialPositionMs = initialPositionMs)
     }
 
-    fun playSingle(track: Track, initialPositionMs: Long = 0L) {
-        playQueue(listOf(track), startIndex = 0, shuffle = false, initialPositionMs = initialPositionMs)
+    fun playSingle(track: Track, initialPositionMs: Long = 0L, forceLocal: Boolean = false) {
+        playQueue(
+            listOf(track),
+            startIndex = 0,
+            shuffle = false,
+            initialPositionMs = initialPositionMs,
+            forceLocal = forceLocal
+        )
     }
 
-    fun play() {
+    fun playLocal() {
         val controller = mediaController ?: return
         onBeforeLocalPlayback?.invoke()
         _state.update { it.copy(isPlaying = true) }
@@ -185,7 +213,7 @@ class PlayerController(
         }
     }
 
-    fun pause() {
+    fun pauseLocal() {
         val controller = mediaController ?: return
         if (isRemoteSessionAttached()) return
         _state.update { it.copy(isPlaying = false) }
@@ -195,7 +223,40 @@ class PlayerController(
         }
     }
 
+    fun setLocalVolume(volume: Float) {
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+        val target = (volume.coerceIn(0f, 1f) * max).toInt().coerceIn(0, max)
+        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, target, 0)
+    }
+
+    fun getLocalVolume(): Float {
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return 1f
+        val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+        return (audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / max).coerceIn(0f, 1f)
+    }
+
+    fun play() {
+        if (remoteBridge?.isControllingRemoteSlave() == true) {
+            remoteBridge?.sendSlaveCommand("play")
+            return
+        }
+        playLocal()
+    }
+
+    fun pause() {
+        if (remoteBridge?.isControllingRemoteSlave() == true) {
+            remoteBridge?.sendSlaveCommand("pause")
+            return
+        }
+        pauseLocal()
+    }
+
     fun togglePlayPause() {
+        if (remoteBridge?.isControllingRemoteSlave() == true) {
+            remoteBridge?.sendSlaveCommand("toggle")
+            return
+        }
         val controller = mediaController ?: return
         onBeforeLocalPlayback?.invoke()
         val currentlyPlaying = _state.value.isPlaying || (!isRemoteSessionAttached() && (controller.isPlaying || controller.playWhenReady))
@@ -210,7 +271,7 @@ class PlayerController(
         }
     }
 
-    fun seekTo(positionMs: Long) {
+    fun seekLocal(positionMs: Long) {
         val controller = mediaController ?: return
         onBeforeLocalPlayback?.invoke()
         val clamped = positionMs.coerceAtLeast(0L)
@@ -218,7 +279,19 @@ class PlayerController(
         _state.update { it.copy(positionMs = clamped) }
     }
 
+    fun seekTo(positionMs: Long) {
+        if (remoteBridge?.isControllingRemoteSlave() == true) {
+            remoteBridge?.sendSlaveCommand("seek", positionMs = positionMs.coerceAtLeast(0L))
+            return
+        }
+        seekLocal(positionMs)
+    }
+
     fun next() {
+        if (remoteBridge?.isControllingRemoteSlave() == true) {
+            remoteBridge?.sendSlaveCommand("next")
+            return
+        }
         val current = _state.value
         if (current.queue.isEmpty()) return
         val nextIndex = current.currentIndex + 1
@@ -228,6 +301,10 @@ class PlayerController(
     }
 
     fun previous() {
+        if (remoteBridge?.isControllingRemoteSlave() == true) {
+            remoteBridge?.sendSlaveCommand("prev")
+            return
+        }
         val current = _state.value
         if (current.queue.isEmpty()) return
         if (current.positionMs > 3000L) {

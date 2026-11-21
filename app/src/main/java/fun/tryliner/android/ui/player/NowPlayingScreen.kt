@@ -62,12 +62,15 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
+import androidx.compose.material.icons.rounded.VolumeUp
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -149,8 +152,14 @@ fun NowPlayingScreen(
         false
     }
 
-    val isRemoteMode = (playbackState.currentTrack == null && remoteState?.track != null) ||
-        (!playbackState.isPlaying && !playbackState.isBuffering && remoteState?.isPlaying == true && remoteState.track != null)
+    val isLocalSlave = if (lanConnectManager != null) {
+        lanConnectManager.isLocalSlave.collectAsState().value
+    } else {
+        false
+    }
+
+    val isRemoteMode = remoteState?.track != null && !isLocalSlave &&
+        (remoteState.isSlave || playbackState.currentTrack == null || (!playbackState.isPlaying && !playbackState.isBuffering && remoteState.isPlaying))
 
     val track: Track? = if (isRemoteMode) {
         remoteState?.track?.let { rt ->
@@ -226,7 +235,33 @@ fun NowPlayingScreen(
             .fillMaxSize()
             .background(BackdropBase)
             .pointerInput(showLyrics, onCollapse, onDragDelta, onDragRelease) {
-                if (!showLyrics) {
+                if (isRemoteMode && lanConnectManager != null && remoteState != null) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.VolumeUp,
+                        contentDescription = null,
+                        tint = Color.White.copy(alpha = 0.72f),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Slider(
+                        value = remoteState.volume.coerceIn(0f, 1f),
+                        onValueChange = { v -> lanConnectManager.setRemoteVolume(v) },
+                        colors = SliderDefaults.colors(
+                            thumbColor = Color.White,
+                            activeTrackColor = Color.White,
+                            inactiveTrackColor = Color.White.copy(alpha = 0.22f)
+                        ),
+                        modifier = Modifier.weight(1f).height(24.dp)
+                    )
+                }
+            }
+
+            if (!showLyrics) {
                     val velocityTracker = VelocityTracker()
                     detectVerticalDragGestures(
                         onDragStart = {
@@ -720,6 +755,32 @@ fun NowPlayingScreen(
                             )
                         }
                     }
+                }
+            }
+
+            if (isRemoteMode && lanConnectManager != null && remoteState != null) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.VolumeUp,
+                        contentDescription = null,
+                        tint = Color.White.copy(alpha = 0.72f),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Slider(
+                        value = remoteState.volume.coerceIn(0f, 1f),
+                        onValueChange = { v -> lanConnectManager.setRemoteVolume(v) },
+                        colors = SliderDefaults.colors(
+                            thumbColor = Color.White,
+                            activeTrackColor = Color.White,
+                            inactiveTrackColor = Color.White.copy(alpha = 0.22f)
+                        ),
+                        modifier = Modifier.weight(1f).height(24.dp)
+                    )
                 }
             }
 
