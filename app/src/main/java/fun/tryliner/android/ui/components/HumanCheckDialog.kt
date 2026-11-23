@@ -93,8 +93,7 @@ fun HumanCheckDialog(
         LinerPanel(
             modifier = Modifier.fillMaxWidth(0.94f),
             shape = LinerShapes.Panel,
-            containerColor = LinerColors.SurfaceGlass,
-            borderColor = LinerColors.BorderAlpha14
+            containerColor = LinerColors.SurfaceGlass
         ) {
             Column(
                 modifier = Modifier

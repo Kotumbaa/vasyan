@@ -26,9 +26,16 @@ val LinerTypography = Typography(
     headlineMedium = TextStyle(
         fontFamily = SfProFamily,
         fontWeight = FontWeight.Bold,
-        fontSize = 24.sp,
-        lineHeight = 30.sp,
+        fontSize = 23.sp,
+        lineHeight = 28.sp,
         letterSpacing = (-0.4).sp
+    ),
+    headlineSmall = TextStyle(
+        fontFamily = SfProFamily,
+        fontWeight = FontWeight.Bold,
+        fontSize = 21.sp,
+        lineHeight = 26.sp,
+        letterSpacing = (-0.3).sp
     ),
     titleLarge = TextStyle(
         fontFamily = SfProFamily,
@@ -48,6 +55,12 @@ val LinerTypography = Typography(
         fontWeight = FontWeight.Medium,
         fontSize = 14.sp,
         lineHeight = 18.sp
+    ),
+    labelMedium = TextStyle(
+        fontFamily = SfProFamily,
+        fontWeight = FontWeight.Medium,
+        fontSize = 12.5.sp,
+        lineHeight = 16.sp
     ),
     bodyMedium = TextStyle(
         fontFamily = SfProFamily,

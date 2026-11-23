@@ -3,9 +3,14 @@ package `fun`.tryliner.android.ui.components
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import `fun`.tryliner.android.ui.theme.LinerMotion
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -58,6 +63,7 @@ import `fun`.tryliner.android.core.model.Track
 import `fun`.tryliner.android.ui.theme.LinerColors
 import `fun`.tryliner.android.ui.theme.LinerShapes
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TrackRow(
     track: Track,
@@ -67,14 +73,27 @@ fun TrackRow(
     onToggleLike: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val rowShape = LinerShapes.Item
+    val haptics = LocalHapticFeedback.current
+    val openTrackMenu = LocalTrackMenuOpener.current
+    val rowShape = RoundedCornerShape(10.dp)
     val coverShape = LinerShapes.Tile
     val rowBg = if (isPlayingCurrent) LinerColors.Fill else Color.Transparent
     val rowModifier = modifier
         .fillMaxWidth()
         .clip(rowShape)
         .background(rowBg)
-        .clickable(onClick = onClick)
+        .combinedClickable(
+            onClick = {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onClick()
+            },
+            onLongClick = openTrackMenu?.let { opener ->
+                {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    opener(track)
+                }
+            }
+        )
         .padding(horizontal = 10.dp, vertical = 7.dp)
 
     Row(
@@ -93,7 +112,7 @@ fun TrackRow(
                     modifier = Modifier
                         .size(44.dp)
                         .clip(coverShape)
-                        .background(Color.Black.copy(alpha = 0.52f)),
+                        .background(LinerColors.AmbientBase.copy(alpha = 0.56f)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
@@ -142,7 +161,7 @@ fun TrackRow(
                     }
                 }
                 Text(
-                    text = track.artistNames.ifBlank { "Unknown Artist" },
+                    text = track.artistNames.ifBlank { "Неизвестный артист" },
                     style = MaterialTheme.typography.bodyMedium,
                     color = LinerColors.TextSecondary,
                     maxLines = 1,
@@ -154,13 +173,13 @@ fun TrackRow(
         if (track.durationMs > 0L) {
             Text(
                 text = formatDurationMs(track.durationMs),
-                style = MaterialTheme.typography.bodySmall,
-                color = LinerColors.TextSecondary,
-                modifier = Modifier.padding(horizontal = 8.dp)
+                style = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = "tnum"),
+                color = LinerColors.TextTertiary,
+                modifier = Modifier.padding(horizontal = 6.dp)
             )
         }
 
-        DownloadButton(track = track)
+        DownloadButton(track = track, buttonSize = 32.dp, iconSize = 17.dp)
 
         val heartScale = remember { Animatable(1f) }
         LaunchedEffect(isLiked) {
@@ -172,22 +191,42 @@ fun TrackRow(
             }
         }
         IconButton(
-            onClick = onToggleLike,
-            modifier = Modifier.size(36.dp)
+            onClick = {
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                onToggleLike()
+            },
+            modifier = Modifier.size(32.dp)
         ) {
             Icon(
                 painter = painterResource(
                     if (isLiked) R.drawable.ic_mgc_heart_fill else R.drawable.ic_mgc_heart_line
                 ),
                 contentDescription = stringResource(if (isLiked) R.string.cd_unlike else R.string.cd_like),
-                tint = if (isLiked) LinerColors.AccentRed else LinerColors.TextTertiary,
+                tint = if (isLiked) LinerColors.TextPrimary else Color.White.copy(alpha = 0.36f),
                 modifier = Modifier
-                    .size(19.dp)
+                    .size(18.dp)
                     .graphicsLayer {
                         scaleX = heartScale.value
                         scaleY = heartScale.value
                     }
             )
+        }
+
+        if (openTrackMenu != null) {
+            IconButton(
+                onClick = {
+                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    openTrackMenu(track)
+                },
+                modifier = Modifier.size(30.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.MoreVert,
+                    contentDescription = "Действия",
+                    tint = Color.White.copy(alpha = 0.44f),
+                    modifier = Modifier.size(17.dp)
+                )
+            }
         }
     }
 }

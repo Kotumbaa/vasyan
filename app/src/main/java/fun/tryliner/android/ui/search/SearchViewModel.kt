@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import `fun`.tryliner.android.AppContainer
 import `fun`.tryliner.android.core.model.SearchResult
 import `fun`.tryliner.android.core.model.Track
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,9 +19,20 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+import kotlinx.coroutines.flow.combine
+
+enum class SearchCatalogSource(val label: String, val apiParam: String?) {
+    SPOTIFY("Spotify", "spotify"),
+    YOUTUBE("YouTube", null)
+}
+
 data class SearchUiState(
     val query: String = "",
+    val source: SearchCatalogSource = SearchCatalogSource.SPOTIFY,
     val tracks: List<Track> = emptyList(),
+    val artists: List<SearchResult.ArtistItem> = emptyList(),
+    val albums: List<SearchResult.AlbumItem> = emptyList(),
+    val playlists: List<SearchResult.PlaylistItem> = emptyList(),
     val isLoading: Boolean = false,
     val errorMessage: String? = null
 )
@@ -34,21 +46,30 @@ class SearchViewModel(
     val state: StateFlow<SearchUiState> = _state.asStateFlow()
 
     private val queryFlow = MutableStateFlow("")
+    private val sourceFlow = MutableStateFlow(SearchCatalogSource.SPOTIFY)
 
     init {
         viewModelScope.launch {
-            queryFlow
-                .debounce(350L)
+            combine(
+                queryFlow.debounce(350L),
+                sourceFlow
+            ) { rawQuery, source -> rawQuery.trim() to source }
                 .distinctUntilChanged()
-                .collectLatest { rawQuery ->
-                    val trimmed = rawQuery.trim()
+                .collectLatest { (trimmed, source) ->
                     if (trimmed.isEmpty()) {
                         _state.update {
-                            it.copy(tracks = emptyList(), isLoading = false, errorMessage = null)
+                            it.copy(
+                                tracks = emptyList(),
+                                artists = emptyList(),
+                                albums = emptyList(),
+                                playlists = emptyList(),
+                                isLoading = false,
+                                errorMessage = null
+                            )
                         }
                         return@collectLatest
                     }
-                    performSearch(trimmed)
+                    performSearch(trimmed, source)
                 }
         }
     }
@@ -58,36 +79,56 @@ class SearchViewModel(
         queryFlow.value = query
     }
 
+    fun onSourceChange(source: SearchCatalogSource) {
+        if (_state.value.source == source) return
+        _state.update { it.copy(source = source, errorMessage = null) }
+        sourceFlow.value = source
+    }
+
     fun clearQuery() {
         onQueryChange("")
     }
 
-    private suspend fun performSearch(query: String) {
+    private suspend fun performSearch(query: String, source: SearchCatalogSource) {
         _state.update { it.copy(isLoading = true, errorMessage = null) }
-        runCatching {
-            withContext(Dispatchers.IO) {
-                val linerItems = runCatching {
-                    container.apiClient.search(query = query, type = "track").items
-                }.getOrElse { emptyList() }
+        try {
+            val items = withContext(Dispatchers.IO) {
+                val linerItems = try {
+                    container.apiClient.search(
+                        query = query,
+                        type = "all",
+                        source = source.apiParam
+                    ).items
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
+                    emptyList()
+                }
 
-                val items = if (linerItems.isNotEmpty()) {
+                if (linerItems.isNotEmpty() || source == SearchCatalogSource.SPOTIFY) {
                     linerItems
                 } else {
                     container.innertubeClient.search(query = query, type = "track")
                 }
-
-                items.filterIsInstance<SearchResult.TrackItem>().map { it.toTrack() }
             }
-        }.onSuccess { tracks ->
+            val tracks = items.filterIsInstance<SearchResult.TrackItem>().map { it.toTrack() }
+            val artists = items.filterIsInstance<SearchResult.ArtistItem>()
+            val albums = items.filterIsInstance<SearchResult.AlbumItem>()
+            val playlists = items.filterIsInstance<SearchResult.PlaylistItem>()
             container.seedLikedTrackIds(tracks)
             _state.update {
                 it.copy(
                     tracks = tracks,
+                    artists = artists,
+                    albums = albums,
+                    playlists = playlists,
                     isLoading = false,
                     errorMessage = null
                 )
             }
-        }.onFailure { error ->
+        } catch (e: CancellationException) {
+            throw e
+        } catch (error: Throwable) {
             _state.update {
                 it.copy(
                     isLoading = false,

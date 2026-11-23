@@ -111,6 +111,7 @@ class TrackDownloadManager(
         if (jobs[track.id]?.isActive == true || isDownloaded(track.id)) return
         setState(track.id, TrackDownloadState.Downloading(0f))
         val job = scope.launch(Dispatchers.IO) {
+            val myJob = coroutineContext[Job]
             try {
                 downloadSemaphore.withPermit {
                     val part = partFile(track.id)
@@ -126,15 +127,21 @@ class TrackDownloadManager(
                     setState(track.id, TrackDownloadState.Downloaded)
                 }
             } catch (e: CancellationException) {
-                partFile(track.id).delete()
-                clearState(track.id)
+                if (jobs[track.id] === myJob) {
+                    partFile(track.id).delete()
+                    clearState(track.id)
+                }
                 throw e
             } catch (e: Throwable) {
                 Log.w(TAG, "Download failed for ${track.id}", e)
-                partFile(track.id).delete()
-                setState(track.id, TrackDownloadState.Failed(e.message ?: "Download failed"))
+                if (jobs[track.id] === myJob) {
+                    partFile(track.id).delete()
+                    setState(track.id, TrackDownloadState.Failed(e.message ?: "Download failed"))
+                }
             } finally {
-                jobs.remove(track.id)
+                if (myJob != null) {
+                    jobs.remove(track.id, myJob)
+                }
             }
         }
         jobs[track.id] = job
@@ -253,25 +260,34 @@ class TrackDownloadManager(
         }
     }
 
-    private fun downloadPlain(url: String, target: File, onProgress: (Float) -> Unit) {
+    private suspend fun downloadPlain(url: String, target: File, onProgress: (Float) -> Unit) {
         val request = Request.Builder().url(url).get().build()
-        httpClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
-            val body = response.body ?: throw IOException("Empty body")
-            val total = body.contentLength()
-            var read = 0L
-            body.byteStream().use { input ->
-                target.outputStream().use { output ->
-                    val buffer = ByteArray(64 * 1024)
-                    while (true) {
-                        val n = input.read(buffer)
-                        if (n < 0) break
-                        output.write(buffer, 0, n)
-                        read += n
-                        if (total > 0) onProgress((read.toFloat() / total).coerceIn(0f, 1f))
+        val call = httpClient.newCall(request)
+        val cancelHandle = coroutineContext[Job]?.invokeOnCompletion {
+            if (it is CancellationException) call.cancel()
+        }
+        try {
+            call.execute().use { response ->
+                if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+                val body = response.body ?: throw IOException("Empty body")
+                val total = body.contentLength()
+                var read = 0L
+                body.byteStream().use { input ->
+                    target.outputStream().use { output ->
+                        val buffer = ByteArray(64 * 1024)
+                        while (true) {
+                            coroutineContext.ensureActive()
+                            val n = input.read(buffer)
+                            if (n < 0) break
+                            output.write(buffer, 0, n)
+                            read += n
+                            if (total > 0) onProgress((read.toFloat() / total).coerceIn(0f, 1f))
+                        }
                     }
                 }
             }
+        } finally {
+            cancelHandle?.dispose()
         }
     }
 

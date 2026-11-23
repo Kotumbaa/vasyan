@@ -72,8 +72,8 @@ import `fun`.tryliner.android.ui.components.rememberCoverAmbient
 import `fun`.tryliner.android.ui.theme.LinerColors
 import `fun`.tryliner.android.ui.theme.LinerShapes
 
-private val MiniPlayerShape = LinerShapes.Control
-private val MiniPlayerBaseBg = Color(0xFF28282E)
+private val MiniPlayerShape = LinerShapes.Floating
+private val MiniPlayerBaseBg = Color(0xD914161C)
 
 @Composable
 fun MiniPlayerBar(
@@ -141,14 +141,23 @@ fun MiniPlayerBar(
     }
 
     val coverAmbient = rememberCoverAmbient(coverUrl)
-    val spotifyBarBg by animateColorAsState(
+    val baseGlassColor by animateColorAsState(
         targetValue = lerp(
             MiniPlayerBaseBg,
             coverAmbient?.backdropColor ?: LinerColors.AmbientBlue,
-            0.82f
-        ),
+            0.34f
+        ).copy(alpha = 0.88f),
         animationSpec = LinerMotion.easeOutTween(450),
         label = "miniPlayerBg"
+    )
+    val progressFillColor by animateColorAsState(
+        targetValue = lerp(
+            Color.White.copy(alpha = 0.14f),
+            (coverAmbient?.accentColor ?: Color.White).copy(alpha = 0.22f),
+            0.45f
+        ),
+        animationSpec = LinerMotion.easeOutTween(450),
+        label = "miniPlayerProgressFill"
     )
 
     val swipeOffsetX = remember { Animatable(0f) }
@@ -161,7 +170,7 @@ fun MiniPlayerBar(
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .padding(horizontal = 12.dp, vertical = 4.dp)
             .graphicsLayer {
                 translationX = swipeOffsetX.value
                 alpha = dragAlpha
@@ -212,19 +221,71 @@ fun MiniPlayerBar(
             }
             .clickable(onClick = onClick),
         shape = MiniPlayerShape,
-        color = spotifyBarBg
+        color = baseGlassColor
     ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .drawDesktopProgressFill(progress = progress, fillColor = progressFillColor)
+        ) {
+            if (activeRemote != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color.White.copy(alpha = 0.05f))
+                        .padding(start = 12.dp, end = 8.dp, top = 5.dp, bottom = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Computer,
+                            contentDescription = null,
+                            tint = Color.White.copy(alpha = 0.70f),
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        val statusLabel = if (activeRemote.isPlaying) "Playing on" else "Paused on"
+                        Text(
+                            text = "$statusLabel ${activeRemote.deviceName}",
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                            color = Color.White.copy(alpha = 0.72f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Surface(
+                        onClick = onPlayOnPhone,
+                        shape = CircleShape,
+                        color = Color.White.copy(alpha = 0.12f)
+                    ) {
+                        Text(
+                            text = "На телефон",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.SemiBold
+                            ),
+                            color = Color.White.copy(alpha = 0.92f),
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp)
+                        )
+                    }
+                }
+            }
+
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 8.dp, end = 6.dp, top = 8.dp, bottom = 7.dp),
+                    .padding(start = 10.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 LinerCoverArt(
                     url = coverUrl,
                     contentDescription = title,
-                    size = 40.dp,
+                    size = 42.dp,
                     shape = LinerShapes.Tile
                 )
 
@@ -237,50 +298,17 @@ fun MiniPlayerBar(
                             fontSize = 13.5.sp,
                             fontWeight = FontWeight.SemiBold
                         ),
-                        color = Color.White,
+                        color = LinerColors.TextPrimary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (activeRemote != null) {
-                            Icon(
-                                imageVector = Icons.Rounded.Computer,
-                                contentDescription = null,
-                                tint = Color(0xFF1ED760),
-                                modifier = Modifier.size(12.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = activeRemote.deviceName,
-                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
-                                color = Color(0xFF1ED760),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        } else {
-                            Text(
-                                text = artist,
-                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
-                                color = Color.White.copy(alpha = 0.72f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                }
-
-                if (activeRemote != null) {
-                    IconButton(
-                        onClick = onPlayOnPhone,
-                        modifier = Modifier.size(34.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Smartphone,
-                            contentDescription = "Play on Phone",
-                            tint = Color.White.copy(alpha = 0.85f),
-                            modifier = Modifier.size(19.dp)
-                        )
-                    }
+                    Text(
+                        text = artist,
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                        color = Color.White.copy(alpha = 0.58f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
 
                 if (!showRemoteAsMain) {
@@ -302,9 +330,9 @@ fun MiniPlayerBar(
                                 if (isLiked) R.drawable.ic_mgc_heart_fill else R.drawable.ic_mgc_heart_line
                             ),
                             contentDescription = stringResource(if (isLiked) R.string.cd_unlike else R.string.cd_like),
-                            tint = if (isLiked) LinerColors.AccentRed else Color.White.copy(alpha = 0.72f),
+                            tint = if (isLiked) LinerColors.TextPrimary else Color.White.copy(alpha = 0.52f),
                             modifier = Modifier
-                                .size(20.dp)
+                                .size(19.dp)
                                 .graphicsLayer {
                                     scaleX = heartScale.value
                                     scaleY = heartScale.value
@@ -321,7 +349,7 @@ fun MiniPlayerBar(
                         CircularProgressIndicator(
                             modifier = Modifier.size(18.dp),
                             strokeWidth = 2.dp,
-                            color = Color.White
+                            color = LinerColors.TextPrimary
                         )
                     } else {
                         Icon(
@@ -331,28 +359,11 @@ fun MiniPlayerBar(
                             contentDescription = stringResource(
                                 if (isPlaying) R.string.cd_pause else R.string.cd_play
                             ),
-                            tint = Color.White,
-                            modifier = Modifier.size(22.dp)
+                            tint = LinerColors.TextPrimary,
+                            modifier = Modifier.size(21.dp)
                         )
                     }
                 }
-            }
-
-            // Razor-thin Spotify progress line along bottom edge
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp)
-                    .height(2.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.22f))
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(progress)
-                        .height(2.dp)
-                        .background(Color.White)
-                )
             }
         }
     }

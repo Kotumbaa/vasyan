@@ -3,10 +3,13 @@ package `fun`.tryliner.android.core.network
 import `fun`.tryliner.android.core.crypto.PowTimeoutException
 import `fun`.tryliner.android.core.crypto.ProofOfWorkSolver
 import `fun`.tryliner.android.core.crypto.WasmRequestSigner
+import `fun`.tryliner.android.core.model.AlbumDetails
 import `fun`.tryliner.android.core.model.ApiError
 import `fun`.tryliner.android.core.model.ApiErrorBody
+import `fun`.tryliner.android.core.model.ArtistDetails
 import `fun`.tryliner.android.core.model.AuthSession
 import `fun`.tryliner.android.core.model.AuthUser
+import `fun`.tryliner.android.core.model.CatalogPlaylistDetails
 import `fun`.tryliner.android.core.model.DailyMixesResponse
 import `fun`.tryliner.android.core.model.LikedTracksPage
 import `fun`.tryliner.android.core.model.LyricsSearchResult
@@ -51,6 +54,19 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+
+@Serializable
+data class SpotifyImportTrack(
+    val title: String,
+    val artist: String = "",
+    val durationMs: Long = 0L,
+)
+
+@Serializable
+data class SpotifyImportResponse(
+    val title: String = "",
+    val tracks: List<SpotifyImportTrack> = emptyList(),
+)
 
 @Serializable
 data class EdgeKeyResponse(
@@ -349,13 +365,30 @@ class LinerApiClient(
 
     // ---- Catalog & Search ----
 
-    suspend fun search(query: String, type: String = "all"): SearchResponse {
-        val path = "/v1/catalog/search?q=${urlEncode(query)}&type=${urlEncode(type)}"
+    suspend fun search(
+        query: String,
+        type: String = "all",
+        source: String? = null,
+    ): SearchResponse {
+        val sourceParam = if (!source.isNullOrBlank()) "&source=${urlEncode(source)}" else ""
+        val path = "/v1/catalog/search?q=${urlEncode(query)}&type=${urlEncode(type)}$sourceParam"
         return request("GET", path)
     }
 
     suspend fun getTrack(id: String): TrackDetails =
         request("GET", "/v1/catalog/tracks/${urlEncode(id)}")
+
+    suspend fun getArtist(id: String): ArtistDetails =
+        request("GET", "/v1/catalog/artists/${urlEncode(id)}")
+
+    suspend fun getAlbum(id: String): AlbumDetails =
+        request("GET", "/v1/catalog/albums/${urlEncode(id)}")
+
+    suspend fun getCatalogPlaylist(id: String): CatalogPlaylistDetails =
+        request("GET", "/v1/catalog/playlists/${urlEncode(id)}")
+
+    suspend fun importSpotify(url: String): SpotifyImportResponse =
+        request("GET", "/v1/catalog/import/spotify?url=${urlEncode(url)}")
 
     // ---- Lyrics ----
 

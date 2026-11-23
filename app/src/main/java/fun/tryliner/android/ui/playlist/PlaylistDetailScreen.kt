@@ -1,6 +1,12 @@
 package `fun`.tryliner.android.ui.playlist
 
+import android.content.Context
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,11 +17,28 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.HazeStyle
+import dev.chrisbanes.haze.HazeTint
+import dev.chrisbanes.haze.hazeEffect
+import dev.chrisbanes.haze.hazeSource
+import `fun`.tryliner.android.ui.components.LocalAppHazeState
+import `fun`.tryliner.android.ui.components.TrackListSkeleton
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -30,7 +53,10 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -45,12 +71,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import `fun`.tryliner.android.AppContainer
 import `fun`.tryliner.android.R
@@ -60,6 +88,7 @@ import `fun`.tryliner.android.ui.components.LinerCoverArt
 import `fun`.tryliner.android.ui.components.LocalTrackDownloads
 import `fun`.tryliner.android.ui.components.TrackRow
 import `fun`.tryliner.android.ui.components.formatDurationMs
+import `fun`.tryliner.android.ui.components.rememberCoverAmbient
 import `fun`.tryliner.android.ui.theme.LinerColors
 import `fun`.tryliner.android.ui.theme.LinerMotion
 import `fun`.tryliner.android.ui.theme.LinerShapes
@@ -75,6 +104,7 @@ private val PlaylistHeaderTints = listOf(
     Color(0xFF3D2720)
 )
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlaylistDetailScreen(
     viewModel: PlaylistDetailViewModel,
@@ -83,12 +113,29 @@ fun PlaylistDetailScreen(
     bottomContentPadding: PaddingValues = PaddingValues(0.dp)
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val importState by viewModel.importState.collectAsStateWithLifecycle()
     val likedIds by container.likedTrackIds.collectAsStateWithLifecycle()
     val playbackState by container.playerController.state.collectAsStateWithLifecycle()
+    var showImportDialog by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
+    val showStickyTitle by remember {
+        derivedStateOf { listState.firstVisibleItemIndex > 0 }
+    }
+    val isScrolled by remember {
+        derivedStateOf {
+            listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 12
+        }
+    }
+    val haptics = LocalHapticFeedback.current
+    val localFallbackHaze = remember { HazeState() }
+    val appHazeState = LocalAppHazeState.current ?: localFallbackHaze
+    val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val headerOverlayHeight = statusBarTop + 58.dp
 
-    val topTint = remember(state.isLikedCollection, state.title) {
-        if (state.isLikedCollection) {
-            Color(0xFF3F2D6B)
+    val coverAmbient = rememberCoverAmbient(state.coverUrl)
+    val topTint = remember(state.isLikedCollection, state.title, coverAmbient?.backdropColor) {
+        coverAmbient?.backdropColor ?: if (state.isLikedCollection) {
+            Color(0xFF232735)
         } else {
             val idx = abs(state.title.hashCode()) % PlaylistHeaderTints.size
             PlaylistHeaderTints[idx]
@@ -98,77 +145,54 @@ fun PlaylistDetailScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Transparent)
+            .background(PlaylistBackdropTarget)
     ) {
-        // Soft desaturated ambient gradient at top fading into #0D0F14, transparent below
+        // Scrollable content + ambient gradient wrapped in hazeSource so both top bar and bottom nav blur it
         Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .height(340.dp)
-                .background(
-                    Brush.verticalGradient(
-                        0.0f to topTint.copy(alpha = 0.56f),
-                        0.58f to PlaylistBackdropTarget.copy(alpha = 0.68f),
-                        1.0f to Color.Transparent
-                    )
-                )
-        )
-
-        Column(modifier = Modifier.fillMaxSize()) {
-            // Minimal top bar with borderless back button
-            Row(
+                .fillMaxSize()
+                .hazeSource(state = appHazeState)
+        ) {
+            // Full-bleed top ambient gradient covering status bar & camera cutout with playlist color
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Surface(
-                    onClick = onBack,
-                    shape = CircleShape,
-                    color = Color.White.copy(alpha = 0.10f),
-                    modifier = Modifier.size(38.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_mgc_arrow_left_line),
-                            contentDescription = stringResource(R.string.cd_back),
-                            tint = Color.White,
-                            modifier = Modifier.size(20.dp)
+                    .height(380.dp)
+                    .background(
+                        Brush.verticalGradient(
+                            0.0f to topTint.copy(alpha = 0.74f),
+                            0.55f to PlaylistBackdropTarget.copy(alpha = 0.86f),
+                            1.0f to PlaylistBackdropTarget
                         )
-                    }
-                }
-            }
+                    )
+            )
 
             when {
-                state.isLoading -> {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = Color.White.copy(alpha = 0.80f))
+                state.isLoading && state.tracks.isEmpty() -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(top = headerOverlayHeight + 16.dp)
+                    ) {
+                        TrackListSkeleton(count = 8)
                     }
                 }
-                state.errorMessage != null -> {
+                state.errorMessage != null && state.tracks.isEmpty() -> {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(horizontal = 24.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = LinerColors.FillSubtle
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(24.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally
-                            ) {
-                                Text(
-                                    text = state.errorMessage.orEmpty(),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = LinerColors.TextSecondary
-                                )
-                                Spacer(modifier = Modifier.height(10.dp))
-                                TextButton(onClick = viewModel::load) {
-                                    Text("Retry", color = Color.White)
-                                }
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = state.errorMessage.orEmpty(),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = LinerColors.TextSecondary
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            TextButton(onClick = viewModel::load) {
+                                Text("Повторить", color = LinerColors.TextPrimary)
                             }
                         }
                     }
@@ -176,66 +200,73 @@ fun PlaylistDetailScreen(
                 else -> {
                     val listBottomPadding = (bottomContentPadding.calculateBottomPadding() + 24.dp)
                         .coerceAtLeast(140.dp)
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(
-                            start = 16.dp,
-                            end = 16.dp,
-                            top = 4.dp,
-                            bottom = listBottomPadding
-                        ),
-                        verticalArrangement = Arrangement.spacedBy(0.dp)
+                    PullToRefreshBox(
+                        isRefreshing = state.isLoading && state.tracks.isNotEmpty(),
+                        onRefresh = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            viewModel.load()
+                        },
+                        modifier = Modifier.fillMaxSize()
                     ) {
-                        item(key = "hero_header") {
-                            EntityHeroHeader(
-                                state = state,
-                                onPlayAll = { viewModel.playAll(shuffle = false) },
-                                onShuffle = { viewModel.playAll(shuffle = true) }
-                            )
-                            Spacer(modifier = Modifier.height(14.dp))
-                        }
-
-                        if (state.tracks.isEmpty()) {
-                            item(key = "empty_tracks") {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 40.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = "No tracks yet",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = LinerColors.TextTertiary
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(
+                                start = 12.dp,
+                                end = 12.dp,
+                                top = headerOverlayHeight + 4.dp,
+                                bottom = listBottomPadding
+                            ),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            item(key = "hero_header") {
+                                Box(modifier = Modifier.padding(horizontal = 4.dp)) {
+                                    EntityHeroHeader(
+                                        state = state,
+                                        onPlayAll = {
+                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            viewModel.playAll(shuffle = false)
+                                        },
+                                        onShuffle = {
+                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            viewModel.playAll(shuffle = true)
+                                        },
+                                        onOpenImport = if (state.isLikedCollection) {
+                                            {
+                                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                viewModel.resetImportState()
+                                                showImportDialog = true
+                                            }
+                                        } else {
+                                            null
+                                        }
                                     )
                                 }
+                                Spacer(modifier = Modifier.height(14.dp))
                             }
-                        } else {
-                            val total = state.tracks.size
-                            itemsIndexed(
-                                items = state.tracks,
-                                key = { index, track -> "${index}_${track.id}" }
-                            ) { index, track ->
-                                val isLiked = likedIds.contains(track.id)
-                                val isPlayingCurrent = playbackState.currentTrack?.id == track.id
-                                val panelShape = when {
-                                    total == 1 -> LinerShapes.Item
-                                    index == 0 -> RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
-                                    index == total - 1 -> RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp)
-                                    else -> RoundedCornerShape(0.dp)
-                                }
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(panelShape)
-                                        .background(LinerColors.FillSubtle)
-                                        .padding(
-                                            start = 4.dp,
-                                            end = 4.dp,
-                                            top = if (index == 0) 4.dp else 0.dp,
-                                            bottom = if (index == total - 1) 4.dp else 0.dp
+
+                            if (state.tracks.isEmpty()) {
+                                item(key = "empty_tracks") {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 40.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "Пока нет треков",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = LinerColors.TextTertiary
                                         )
-                                ) {
+                                    }
+                                }
+                            } else {
+                                itemsIndexed(
+                                    items = state.tracks,
+                                    key = { index, track -> "${index}_${track.id}" }
+                                ) { index, track ->
+                                    val isLiked = likedIds.contains(track.id)
+                                    val isPlayingCurrent = playbackState.currentTrack?.id == track.id
                                     TrackRow(
                                         track = track,
                                         isLiked = isLiked,
@@ -250,6 +281,120 @@ fun PlaylistDetailScreen(
                 }
             }
         }
+
+        // Top bar overlay: frosted-glass translucent + backdrop blur when scrolled (matching bottom nav)
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .then(
+                    if (isScrolled) {
+                        Modifier
+                            .hazeEffect(
+                                state = appHazeState,
+                                style = HazeStyle(
+                                    backgroundColor = Color(0xFF0D0F14),
+                                    tint = HazeTint(Color(0xFF0D0F14).copy(alpha = 0.56f)),
+                                    blurRadius = 24.dp
+                                )
+                            )
+                            .background(
+                                Brush.verticalGradient(
+                                    0.0f to Color(0x550A0C10),
+                                    0.96f to Color.Transparent,
+                                    1.0f to Color.White.copy(alpha = 0.05f)
+                                )
+                            )
+                    } else {
+                        Modifier
+                    }
+                )
+                .statusBarsPadding()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Surface(
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onBack()
+                    },
+                    shape = CircleShape,
+                    color = Color.White.copy(alpha = 0.12f),
+                    modifier = Modifier.size(38.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_mgc_arrow_left_line),
+                            contentDescription = stringResource(R.string.cd_back),
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+
+                AnimatedVisibility(
+                    visible = showStickyTitle,
+                    enter = fadeIn(),
+                    exit = fadeOut(),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        text = if (state.isLikedCollection) "Понравившиеся" else state.title,
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = LinerColors.TextPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                if (!showStickyTitle) {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+
+                AnimatedVisibility(
+                    visible = showStickyTitle && state.tracks.isNotEmpty(),
+                    enter = fadeIn(),
+                    exit = fadeOut()
+                ) {
+                    Surface(
+                        onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            viewModel.playAll(shuffle = false)
+                        },
+                        shape = CircleShape,
+                        color = Color.White,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Rounded.PlayArrow,
+                                contentDescription = "Слушать",
+                                tint = PlaylistBackdropTarget,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        if (showImportDialog) {
+            ImportLikedDialog(
+                importState = importState,
+                onDismiss = {
+                    if (!importState.isImporting) {
+                        showImportDialog = false
+                        viewModel.resetImportState()
+                    }
+                },
+                onImport = { text -> viewModel.importToLiked(text) }
+            )
+        }
     }
 }
 
@@ -257,7 +402,8 @@ fun PlaylistDetailScreen(
 private fun EntityHeroHeader(
     state: PlaylistDetailUiState,
     onPlayAll: () -> Unit,
-    onShuffle: () -> Unit
+    onShuffle: () -> Unit,
+    onOpenImport: (() -> Unit)? = null
 ) {
     val coverShape = LinerShapes.HeroCover
 
@@ -345,7 +491,7 @@ private fun EntityHeroHeader(
             Button(
                 onClick = onPlayAll,
                 enabled = state.tracks.isNotEmpty(),
-                shape = LinerShapes.HeroButton,
+                shape = CircleShape,
                 elevation = ButtonDefaults.buttonElevation(
                     defaultElevation = 0.dp,
                     pressedElevation = 0.dp,
@@ -359,7 +505,7 @@ private fun EntityHeroHeader(
                     disabledContainerColor = Color.White.copy(alpha = 0.25f),
                     disabledContentColor = LinerColors.BtnPrimaryText.copy(alpha = 0.6f)
                 ),
-                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp),
+                contentPadding = PaddingValues(horizontal = 22.dp, vertical = 10.dp),
                 modifier = Modifier.height(40.dp)
             ) {
                 Icon(
@@ -369,7 +515,7 @@ private fun EntityHeroHeader(
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "Play all",
+                    text = "Слушать",
                     style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold)
                 )
             }
@@ -377,7 +523,7 @@ private fun EntityHeroHeader(
             Surface(
                 onClick = onShuffle,
                 enabled = state.tracks.isNotEmpty(),
-                shape = LinerShapes.HeroButton,
+                shape = CircleShape,
                 color = LinerColors.HeroGlass,
                 modifier = Modifier.size(40.dp)
             ) {
@@ -396,6 +542,204 @@ private fun EntityHeroHeader(
             }
 
             PlaylistDownloadButton(tracks = state.tracks)
+
+            if (onOpenImport != null) {
+                Surface(
+                    onClick = onOpenImport,
+                    shape = CircleShape,
+                    color = LinerColors.HeroGlass,
+                    modifier = Modifier.height(40.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_mgc_download_line),
+                            contentDescription = "Импорт в понравившиеся",
+                            tint = LinerColors.TextPrimary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = "Импорт",
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Medium),
+                            color = LinerColors.TextPrimary
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ImportLikedDialog(
+    importState: ImportLikedState,
+    onDismiss: () -> Unit,
+    onImport: (String) -> Unit
+) {
+    val context = LocalContext.current
+    var rawText by remember { mutableStateOf("") }
+    val filePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            val content = runCatching {
+                context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+            }.getOrNull()
+            if (!content.isNullOrBlank()) {
+                rawText = content
+            }
+        }
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = LinerShapes.Panel,
+            color = LinerColors.SurfaceGlass,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "Импорт в Понравившиеся",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = LinerColors.TextPrimary
+                )
+                Text(
+                    text = "Вставь ссылку на Spotify / YouTube плейлист или список треков (по одному на строку: Исполнитель - Трек).",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = LinerColors.TextSecondary
+                )
+
+                OutlinedTextField(
+                    value = rawText,
+                    onValueChange = { rawText = it },
+                    enabled = !importState.isImporting,
+                    placeholder = {
+                        Text(
+                            text = "https://open.spotify.com/playlist/...\nhttps://music.youtube.com/playlist?list=...\nили: Artist - Song",
+                            color = LinerColors.TextTertiary,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    },
+                    minLines = 4,
+                    maxLines = 7,
+                    shape = LinerShapes.Item,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color.Transparent,
+                        unfocusedBorderColor = Color.Transparent,
+                        focusedContainerColor = LinerColors.Fill,
+                        unfocusedContainerColor = LinerColors.FillSubtle,
+                        focusedTextColor = LinerColors.TextPrimary,
+                        unfocusedTextColor = LinerColors.TextPrimary,
+                        cursorColor = LinerColors.TextPrimary
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                if (importState.isImporting) {
+                    val progress = if (importState.total > 0) {
+                        importState.done.toFloat() / importState.total.toFloat()
+                    } else {
+                        0f
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (importState.total > 0) {
+                            LinearProgressIndicator(
+                                progress = { progress },
+                                color = Color.White,
+                                trackColor = Color.White.copy(alpha = 0.16f),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(4.dp)
+                                    .clip(CircleShape)
+                            )
+                            Text(
+                                text = "Обработано ${importState.done} из ${importState.total} (добавлено: ${importState.imported})",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = LinerColors.TextSecondary
+                            )
+                        } else {
+                            LinearProgressIndicator(
+                                color = Color.White,
+                                trackColor = Color.White.copy(alpha = 0.16f),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(4.dp)
+                                    .clip(CircleShape)
+                            )
+                            Text(
+                                text = "Загружаю список треков…",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = LinerColors.TextSecondary
+                            )
+                        }
+                    }
+                } else if (importState.finished) {
+                    Text(
+                        text = "Готово! Добавлено в Понравившиеся: ${importState.imported} из ${importState.total}.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = LinerColors.TextPrimary
+                    )
+                } else if (!importState.error.isNullOrBlank()) {
+                    Text(
+                        text = importState.error.orEmpty(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = LinerColors.AccentWarning
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        onClick = { filePicker.launch(arrayOf("text/plain", "text/csv", "*/*")) },
+                        enabled = !importState.isImporting,
+                        shape = CircleShape,
+                        color = LinerColors.HeroGlass
+                    ) {
+                        Text(
+                            text = "Из файла",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = LinerColors.TextPrimary,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                        )
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(
+                            onClick = onDismiss,
+                            enabled = !importState.isImporting
+                        ) {
+                            Text(
+                                text = if (importState.finished) "Закрыть" else "Отмена",
+                                color = LinerColors.TextSecondary
+                            )
+                        }
+                        if (!importState.finished) {
+                            Button(
+                                onClick = { onImport(rawText) },
+                                enabled = rawText.isNotBlank() && !importState.isImporting,
+                                shape = CircleShape,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color.White,
+                                    contentColor = LinerColors.BtnPrimaryText
+                                )
+                            ) {
+                                Text("Импортировать", fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

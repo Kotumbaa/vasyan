@@ -2,6 +2,7 @@ package `fun`.tryliner.android.playback
 
 import android.content.Context
 import android.os.Build
+import android.os.SystemClock
 import `fun`.tryliner.android.core.model.AuthSession
 import `fun`.tryliner.android.core.model.Cover
 import `fun`.tryliner.android.core.model.Track
@@ -153,6 +154,7 @@ class LanConnectManager(
 
     private val _isLocalSlave = MutableStateFlow(false)
     val isLocalSlave: StateFlow<Boolean> = _isLocalSlave.asStateFlow()
+    private val _preferRemoteSlave = MutableStateFlow(false)
 
     @Volatile
     private var lastLocalClaimAtMs: Long = 0L
@@ -188,13 +190,16 @@ class LanConnectManager(
     }
 
     override fun isControllingRemoteSlave(): Boolean {
+        if (!_isConnected.value || _isLocalSlave.value) return false
+        if (_preferRemoteSlave.value) return true
         val remote = _remoteState.value ?: return false
-        return _isConnected.value && !_isLocalSlave.value && (remote.isSlave || remote.isPlaying)
+        return remote.isSlave || remote.isPlaying
     }
 
     override fun onLocalPlaybackClaimed() {
+        _preferRemoteSlave.value = false
         _isLocalSlave.value = true
-        lastLocalClaimAtMs = System.currentTimeMillis()
+        lastLocalClaimAtMs = SystemClock.elapsedRealtime()
     }
 
     override fun playQueueOnSlave(
@@ -203,15 +208,18 @@ class LanConnectManager(
         shuffle: Boolean,
         initialPositionMs: Long
     ) {
-        val picked = tracks.getOrNull(startIndex) ?: tracks.firstOrNull() ?: return
-        val remoteQueue = tracks.take(50).map { it.toRemoteTrack() }
-        val clampedIndex = startIndex.coerceIn(0, (remoteQueue.size - 1).coerceAtLeast(0))
+        val safeIndex = startIndex.coerceIn(0, (tracks.size - 1).coerceAtLeast(0))
+        val picked = tracks.getOrNull(safeIndex) ?: return
+        val windowStart = (safeIndex - 10).coerceIn(0, (tracks.size - 50).coerceAtLeast(0))
+        val windowTracks = tracks.subList(windowStart, minOf(tracks.size, windowStart + 50))
+        val remoteQueue = windowTracks.map { it.toRemoteTrack() }
+        val relativeIndex = (safeIndex - windowStart).coerceIn(0, (remoteQueue.size - 1).coerceAtLeast(0))
         sendCommand(
             action = "play",
             positionMs = initialPositionMs.takeIf { it > 0L },
             track = picked.toRemoteTrack(),
             queue = remoteQueue,
-            startIndex = clampedIndex,
+            startIndex = relativeIndex,
             shuffle = shuffle
         )
     }
@@ -266,15 +274,34 @@ class LanConnectManager(
     }
 
     fun handoffToRemote() {
-        val state = playerController.state.value
-        val currentTrack = state.currentTrack ?: return
         _isLocalSlave.value = false
-        sendCommand(
-            action = "handoff",
-            positionMs = state.positionMs,
-            track = currentTrack.toRemoteTrack()
-        )
-        playerController.pauseLocal()
+        _preferRemoteSlave.value = true
+        _remoteState.update { current -> current?.copy(isSlave = true) }
+        val state = playerController.state.value
+        val currentTrack = state.currentTrack
+        if (currentTrack != null) {
+            val queue = state.queue
+            val safeIndex = state.currentIndex.coerceIn(0, (queue.size - 1).coerceAtLeast(0))
+            val windowStart = (safeIndex - 10).coerceIn(0, (queue.size - 50).coerceAtLeast(0))
+            val remoteQueue = if (queue.isNotEmpty()) {
+                queue.subList(windowStart, minOf(queue.size, windowStart + 50)).map { it.toRemoteTrack() }
+            } else {
+                null
+            }
+            val relativeIndex = if (remoteQueue != null) {
+                (safeIndex - windowStart).coerceIn(0, (remoteQueue.size - 1).coerceAtLeast(0))
+            } else {
+                null
+            }
+            sendCommand(
+                action = "handoff",
+                positionMs = state.positionMs,
+                track = currentTrack.toRemoteTrack(),
+                queue = remoteQueue,
+                startIndex = relativeIndex
+            )
+            playerController.pauseLocal()
+        }
         synchronized(wsLock) { activeWebSocket }?.let { sendCurrentState(it) }
     }
 
@@ -462,7 +489,9 @@ class LanConnectManager(
                 val stateMsg = runCatching { json.decodeFromString<LanStateMessage>(text) }.getOrNull() ?: return
                 if (stateMsg.deviceId == deviceId) return
                 val peerIsSlave = stateMsg.isSlave || stateMsg.isPlaying
-                if (peerIsSlave && !playerController.state.value.isPlaying && stateMsg.updatedAt > lastLocalClaimAtMs) {
+                val localState = playerController.state.value
+                val claimGraceElapsed = (SystemClock.elapsedRealtime() - lastLocalClaimAtMs) > 2500L
+                if (stateMsg.isPlaying && !localState.isPlaying && !localState.isBuffering && claimGraceElapsed) {
                     _isLocalSlave.value = false
                 }
                 _remoteState.value = RemotePlaybackState(

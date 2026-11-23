@@ -3,45 +3,45 @@ package `fun`.tryliner.android.ui.theme
 import androidx.compose.ui.graphics.Color
 
 object LinerColors {
-    // Desktop globals.css dark theme tokens
-    val BgCanvas = Color(0xFF000000)
-    val AmbientBase = Color(0xFF0A0A0C)
-    val AmbientBlue = Color(0xFF1A2436)
-    val AmbientCrimson = Color(0xFF231C28)
-    val AmbientViolet = Color(0xFF1F1B30)
-    val BgPrimary = Color(0xFF0A0A0A)
-    val BgElevated = Color(0xFF141414)
-    val BgPanel = Color(0xFF1A1A1A)
-    val SurfaceGlass = Color(0xE6161618)    // rgba(22, 22, 24, 0.90)
-    val NavBarGlass = Color(0xD90A0A0C)     // translucent dark glass so full-screen gradient shows through
-    val MiniPlayerGlass = Color(0xE6161618) // rgba(22, 22, 24, 0.90)
+    // Atmospheric dark theme tokens (matching desktop DESIGN.md + #0D0F14 / #101218 base)
+    val BgCanvas = Color(0xFF0D0F14)
+    val AmbientBase = Color(0xFF0D0F14)
+    val AmbientBlue = Color(0xFF1D273B)
+    val AmbientCrimson = Color(0xFF281D2B)
+    val AmbientViolet = Color(0xFF231D36)
+    val BgPrimary = Color(0xFF0D0F14)
+    val BgElevated = Color(0xFF14171F)
+    val BgPanel = Color(0xFF181C26)
+    val SurfaceGlass = Color(0xEB101218)    // rgba(16, 18, 24, 0.92)
+    val NavBarGlass = Color(0xE60D0F14)     // dense translucent slate-dark scrim
+    val MiniPlayerGlass = Color(0xC714161C) // rgba(20, 22, 28, 0.78)
 
-    val TextPrimary = Color(0xFFFFFFFF)
-    val TextSecondary = Color(0xB3FFFFFF)   // white @ 70% (--text-secondary)
-    val TextTertiary = Color(0x73FFFFFF)    // white @ 45% (--text-tertiary)
+    val TextPrimary = Color(0xF2FFFFFF)     // white @ 95%
+    val TextSecondary = Color(0x99FFFFFF)   // white @ 60%
+    val TextTertiary = Color(0x73FFFFFF)    // white @ 45%
 
-    val AccentPrimary = Color(0xFFFFFFFF)
-    val AccentRed = Color(0xFFFF4D4D)       // desktop --accent-primary
+    val AccentPrimary = Color(0xF2FFFFFF)   // monochrome white active chrome
+    val AccentRed = Color(0xF2FFFFFF)       // monochrome liked/active accent (no loud red)
     val AccentSecondary = Color(0xFFD0D5DD)
-    val AccentWarning = Color(0xFFFFDE9E)
+    val AccentWarning = Color(0xFFE5C07B)
 
-    val BtnPrimaryBg = Color(0xFFD9D9DD)    // desktop --btn-primary-bg
-    val BtnPrimaryText = Color(0xFF000000)
+    val BtnPrimaryBg = Color(0xFFFFFFFF)
+    val BtnPrimaryText = Color(0xFF0D0F14)
 
-    val FillSubtle = Color(0x0AFFFFFF)      // white @ 4% (--fill-subtle)
-    val Fill = Color(0x12FFFFFF)            // white @ 7% (--fill)
-    val FillHover = Color(0x1AFFFFFF)       // white @ 10% (--fill-hover)
-    val FillStrong = Color(0x24FFFFFF)      // white @ 14% (--fill-strong)
-    val HeroGlass = Color(0x17FFFFFF)       // white @ 9% (HERO_GLASS_CLASS)
+    val FillSubtle = Color(0x0DFFFFFF)      // white @ 5%
+    val Fill = Color(0x12FFFFFF)            // white @ 7%
+    val FillHover = Color(0x1AFFFFFF)       // white @ 10%
+    val FillStrong = Color(0x24FFFFFF)      // white @ 14%
+    val HeroGlass = Color(0x1AFFFFFF)       // white @ 10%
 
-    val BorderAlpha14 = Color(0x14FFFFFF)   // white @ 8% (--border-white-alpha-14)
+    val BorderAlpha14 = Color(0x0DFFFFFF)   // white @ 5% (near-invisible if ever needed)
     val BorderAlpha20 = Color(0x0DFFFFFF)   // white @ 5%
-    val BorderAlpha33 = Color(0x33FFFFFF)   // white @ 20% (--border-white-alpha-33)
+    val BorderAlpha33 = Color(0x14FFFFFF)   // white @ 8%
 
-    val LoginBackdrop = Color(0xFF141417)   // desktop --login-backdrop
-    val LoginGlow = Color(0xFF4B5272)       // desktop --login-glow
-    val LoginGlowSecondary = Color(0xFF3F4560)
+    val LoginBackdrop = Color(0xFF101218)
+    val LoginGlow = Color(0xFF3E4663)
+    val LoginGlowSecondary = Color(0xFF2B324A)
 
-    val LikedVioletStart = Color(0xFF6344F5)
-    val LikedVioletEnd = Color(0xFF281852)
+    val LikedVioletStart = Color(0xFF5A42D4)
+    val LikedVioletEnd = Color(0xFF241848)
 }

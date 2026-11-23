@@ -7,10 +7,11 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.BaseDataSource
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
-import androidx.media3.datasource.DefaultHttpDataSource
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import java.io.IOException
+import java.io.InputStream
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -22,7 +23,8 @@ import kotlin.math.min
  * `&range=start-end` chunks with a 4-stream concurrent prefetch window
  * (matching Liner Desktop's `chunkedAudioDownload.ts` concurrency = 4)
  * to avoid YouTube single-stream throttling.
- * Non-GoogleVideo URIs are delegated to [DefaultHttpDataSource].
+ * Non-GoogleVideo URIs (e.g. SoundCloud streams/HLS) are delegated to an
+ * OkHttp-backed fallback DataSource sharing the same [DpiDesyncProxy]-enabled client.
  */
 @OptIn(UnstableApi::class)
 class ChunkedGoogleVideoDataSource(
@@ -35,19 +37,16 @@ class ChunkedGoogleVideoDataSource(
         private val okHttpClient: OkHttpClient = defaultOkHttpClient(),
         private val userAgent: String = DEFAULT_USER_AGENT,
     ) : DataSource.Factory {
-        private val fallbackFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent(userAgent)
-            .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(15_000)
-            .setReadTimeoutMs(15_000)
-
         private val prefetchExecutor: ExecutorService =
             Executors.newFixedThreadPool(PREFETCH_CONCURRENCY)
 
         override fun createDataSource(): DataSource {
             return ChunkedGoogleVideoDataSource(
                 okHttpClient = okHttpClient,
-                fallbackDataSource = fallbackFactory.createDataSource(),
+                fallbackDataSource = OkHttpFallbackDataSource(
+                    okHttpClient = okHttpClient,
+                    userAgent = userAgent,
+                ),
                 prefetchExecutor = prefetchExecutor,
             )
         }
@@ -60,6 +59,8 @@ class ChunkedGoogleVideoDataSource(
                 .connectTimeout(15, TimeUnit.SECONDS)
                 .readTimeout(15, TimeUnit.SECONDS)
                 .writeTimeout(15, TimeUnit.SECONDS)
+                .followRedirects(true)
+                .followSslRedirects(true)
                 .build()
         }
     }
@@ -76,7 +77,12 @@ class ChunkedGoogleVideoDataSource(
     private var chunkOffset = 0
     private var chunkLength = 0
 
-    private val prefetchedChunks = LinkedHashMap<Long, CompletableFuture<ChunkResult>>()
+    private data class PrefetchEntry(
+        val plannedSize: Long,
+        val future: CompletableFuture<ChunkResult>,
+    )
+
+    private val prefetchedChunks = LinkedHashMap<Long, PrefetchEntry>()
 
     private data class ChunkResult(
         val bytes: ByteArray,
@@ -103,7 +109,7 @@ class ChunkedGoogleVideoDataSource(
 
         transferInitializing(dataSpec)
 
-        val firstChunk = fetchChunk(currentPosition)
+        val firstChunk = fetchChunk(currentPosition, adaptiveChunkSize(leadBytes = 0L))
         if (knownTotalLength == null && firstChunk.totalLength != null) {
             knownTotalLength = firstChunk.totalLength
         }
@@ -178,6 +184,10 @@ class ChunkedGoogleVideoDataSource(
         return if (activeFallback) fallbackDataSource.uri else currentUri
     }
 
+    override fun getResponseHeaders(): Map<String, List<String>> {
+        return if (activeFallback) fallbackDataSource.responseHeaders else super.getResponseHeaders()
+    }
+
     override fun close() {
         if (activeFallback) {
             activeFallback = false
@@ -196,16 +206,16 @@ class ChunkedGoogleVideoDataSource(
     }
 
     private fun takePrefetchedOrFetch(start: Long): ChunkResult {
-        val future = prefetchedChunks.remove(start)
-        if (future != null) {
+        val entry = prefetchedChunks.remove(start)
+        if (entry != null) {
             return try {
-                future.get()
+                entry.future.get()
             } catch (_: Exception) {
-                fetchChunk(start)
+                fetchChunk(start, adaptiveChunkSize(leadBytes = 0L))
             }
         }
         cancelAllPrefetches()
-        return fetchChunk(start)
+        return fetchChunk(start, adaptiveChunkSize(leadBytes = 0L))
     }
 
     private fun fillPrefetchWindow(firstNextStart: Long) {
@@ -218,42 +228,59 @@ class ChunkedGoogleVideoDataSource(
         while (iter.hasNext()) {
             val entry = iter.next()
             if (entry.key < firstNextStart) {
-                entry.value.cancel(true)
+                entry.value.future.cancel(true)
                 iter.remove()
             }
         }
 
         var candidateStart = firstNextStart
-        for (i in 0 until PREFETCH_CONCURRENCY) {
+        for ((start, entry) in prefetchedChunks) {
+            val end = start + entry.plannedSize
+            if (end > candidateStart) {
+                candidateStart = end
+            }
+        }
+
+        while (prefetchedChunks.size < PREFETCH_CONCURRENCY) {
             if (total != null && candidateStart >= total) break
             if (reqEnd != null && candidateStart >= reqEnd) break
-            if (!prefetchedChunks.containsKey(candidateStart)) {
-                val startForTask = candidateStart
-                prefetchedChunks[startForTask] = CompletableFuture.supplyAsync(
-                    { fetchChunkForUri(uri, startForTask) },
-                    prefetchExecutor,
-                )
-            }
-            candidateStart += CHUNK_SIZE
+
+            val leadBytes = (candidateStart - currentPosition).coerceAtLeast(0L)
+            val targetSize = adaptiveChunkSize(leadBytes)
+            val maxEndByTotal = total?.let { it - 1 }
+            val maxEndByRequest = reqEnd?.let { it - 1 }
+            var end = candidateStart + targetSize - 1
+            if (maxEndByTotal != null) end = min(end, maxEndByTotal)
+            if (maxEndByRequest != null) end = min(end, maxEndByRequest)
+            val actualSize = (end - candidateStart + 1).coerceAtLeast(0L)
+            if (actualSize <= 0L) break
+
+            val startForTask = candidateStart
+            val future = CompletableFuture.supplyAsync(
+                { fetchChunkForUri(uri, startForTask, actualSize) },
+                prefetchExecutor,
+            )
+            prefetchedChunks[startForTask] = PrefetchEntry(actualSize, future)
+            candidateStart += actualSize
         }
     }
 
     private fun cancelAllPrefetches() {
-        for (future in prefetchedChunks.values) {
-            future.cancel(true)
+        for (entry in prefetchedChunks.values) {
+            entry.future.cancel(true)
         }
         prefetchedChunks.clear()
     }
 
-    private fun fetchChunk(start: Long): ChunkResult {
+    private fun fetchChunk(start: Long, chunkSize: Long): ChunkResult {
         val uri = currentUri ?: throw IOException("URI is null")
-        return fetchChunkForUri(uri, start)
+        return fetchChunkForUri(uri, start, chunkSize)
     }
 
-    private fun fetchChunkForUri(uri: Uri, start: Long): ChunkResult {
+    private fun fetchChunkForUri(uri: Uri, start: Long, chunkSize: Long): ChunkResult {
         val maxEndByTotal = knownTotalLength?.let { it - 1 }
         val maxEndByRequest = requestEndExclusive?.let { it - 1 }
-        var end = start + CHUNK_SIZE - 1
+        var end = start + chunkSize - 1
         if (maxEndByTotal != null) end = min(end, maxEndByTotal)
         if (maxEndByRequest != null) end = min(end, maxEndByRequest)
 
@@ -278,9 +305,16 @@ class ChunkedGoogleVideoDataSource(
     }
 
     companion object {
-        private const val CHUNK_SIZE = 512L * 1024L
         private const val PREFETCH_CONCURRENCY = 4
         private val CONTENT_RANGE_TOTAL_REGEX = Regex("""/\s*(\d+)$""")
+
+        private fun adaptiveChunkSize(leadBytes: Long): Long = when {
+            leadBytes < 256L * 1024L -> 128L * 1024L         // 128 KB: fast start / seek
+            leadBytes < 1024L * 1024L -> 256L * 1024L        // 256 KB: warming up buffer
+            leadBytes < 3L * 1024L * 1024L -> 512L * 1024L   // 512 KB: steady playback
+            leadBytes < 7L * 1024L * 1024L -> 1024L * 1024L  // 1 MB: large lead, fewer requests
+            else -> 2048L * 1024L                            // 2 MB: deep buffer, minimal requests
+        }
 
         private fun withRangeParam(uri: Uri, start: Long, end: Long): Uri {
             val builder = uri.buildUpon().clearQuery()
@@ -298,6 +332,137 @@ class ChunkedGoogleVideoDataSource(
         private fun parseTotalFromContentRange(header: String?): Long? {
             if (header.isNullOrBlank()) return null
             return CONTENT_RANGE_TOTAL_REGEX.find(header)?.groupValues?.getOrNull(1)?.toLongOrNull()
+        }
+    }
+}
+
+/**
+ * Lightweight Media3 [BaseDataSource] backed by [OkHttpClient] so non-GoogleVideo HTTP/HLS
+ * streams (e.g. SoundCloud `sndcdn.com`) inherit [DpiDesyncProxy] routing as well.
+ */
+@OptIn(UnstableApi::class)
+private class OkHttpFallbackDataSource(
+    private val okHttpClient: OkHttpClient,
+    private val userAgent: String,
+) : BaseDataSource(/* isNetwork = */ true) {
+
+    private var response: Response? = null
+    private var responseStream: InputStream? = null
+    private var opened = false
+    private var bytesToRead = C.LENGTH_UNSET.toLong()
+    private var bytesRead = 0L
+    private var resolvedUri: Uri? = null
+
+    override fun open(dataSpec: DataSpec): Long {
+        transferInitializing(dataSpec)
+        val requestBuilder = Request.Builder()
+            .url(dataSpec.uri.toString())
+            .header("User-Agent", userAgent)
+
+        for ((name, value) in dataSpec.httpRequestHeaders) {
+            requestBuilder.header(name, value)
+        }
+
+        if (dataSpec.position > 0L || dataSpec.length != C.LENGTH_UNSET.toLong()) {
+            val rangeValue = if (dataSpec.length != C.LENGTH_UNSET.toLong()) {
+                val end = dataSpec.position + dataSpec.length - 1
+                "bytes=${dataSpec.position}-$end"
+            } else {
+                "bytes=${dataSpec.position}-"
+            }
+            requestBuilder.header("Range", rangeValue)
+        }
+
+        val request = requestBuilder.build()
+        var lastError: IOException? = null
+        var executed: Response? = null
+        val retryDelaysMs = longArrayOf(350L, 900L)
+
+        for (attempt in 0..retryDelaysMs.size) {
+            try {
+                val res = okHttpClient.newCall(request).execute()
+                if (res.isSuccessful || res.code == 206) {
+                    executed = res
+                    break
+                }
+                val code = res.code
+                res.close()
+                val retryableHttp = code == 502 || code == 503 || code == 504 || code == 429
+                lastError = IOException("HTTP error $code for ${dataSpec.uri}")
+                if (!retryableHttp || attempt == retryDelaysMs.size) {
+                    throw lastError
+                }
+            } catch (e: IOException) {
+                lastError = e
+                if (attempt == retryDelaysMs.size) {
+                    throw e
+                }
+            }
+            try {
+                Thread.sleep(retryDelaysMs[attempt])
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw lastError ?: IOException("Interrupted while retrying ${dataSpec.uri}")
+            }
+        }
+
+        val okResponse = executed ?: throw (lastError ?: IOException("Failed to open ${dataSpec.uri}"))
+        val body = okResponse.body ?: run {
+            okResponse.close()
+            throw IOException("Empty response body for ${dataSpec.uri}")
+        }
+
+        response = okResponse
+        responseStream = body.byteStream()
+        resolvedUri = Uri.parse(okResponse.request.url.toString())
+        bytesRead = 0L
+
+        val contentLength = body.contentLength().takeIf { it >= 0L } ?: C.LENGTH_UNSET.toLong()
+        bytesToRead = when {
+            dataSpec.length != C.LENGTH_UNSET.toLong() -> dataSpec.length
+            contentLength != C.LENGTH_UNSET.toLong() -> contentLength
+            else -> C.LENGTH_UNSET.toLong()
+        }
+
+        opened = true
+        transferStarted(dataSpec)
+        return bytesToRead
+    }
+
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+        if (length == 0) return 0
+        if (bytesToRead != C.LENGTH_UNSET.toLong()) {
+            val remaining = bytesToRead - bytesRead
+            if (remaining <= 0L) return C.RESULT_END_OF_INPUT
+        }
+        val toRead = if (bytesToRead != C.LENGTH_UNSET.toLong()) {
+            min(length.toLong(), bytesToRead - bytesRead).toInt()
+        } else {
+            length
+        }
+        val stream = responseStream ?: return C.RESULT_END_OF_INPUT
+        val read = stream.read(buffer, offset, toRead)
+        if (read == -1) return C.RESULT_END_OF_INPUT
+        bytesRead += read
+        bytesTransferred(read)
+        return read
+    }
+
+    override fun getUri(): Uri? = resolvedUri
+
+    override fun getResponseHeaders(): Map<String, List<String>> {
+        return response?.headers?.toMultimap() ?: emptyMap()
+    }
+
+    override fun close() {
+        runCatching { responseStream?.close() }
+        runCatching { response?.close() }
+        responseStream = null
+        response = null
+        resolvedUri = null
+        if (opened) {
+            opened = false
+            transferEnded()
         }
     }
 }

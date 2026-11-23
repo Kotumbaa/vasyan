@@ -13,26 +13,32 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import `fun`.tryliner.android.core.model.Track
+import `fun`.tryliner.android.ui.components.LocalAppHazeState
+import `fun`.tryliner.android.ui.components.LocalTrackMenuOpener
+import `fun`.tryliner.android.ui.components.TrackActionSheet
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Home
-import androidx.compose.material.icons.rounded.LibraryMusic
-import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -41,24 +47,38 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.size
-import androidx.compose.material3.HorizontalDivider
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.HazeStyle
+import dev.chrisbanes.haze.HazeTint
+import dev.chrisbanes.haze.hazeEffect
+import dev.chrisbanes.haze.hazeSource
 import `fun`.tryliner.android.R
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavGraphBuilder
+import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import androidx.navigation.navigation
+import android.net.Uri
 import `fun`.tryliner.android.AppContainer
+import `fun`.tryliner.android.ui.artist.ArtistScreen
+import `fun`.tryliner.android.ui.artist.ArtistViewModel
 import `fun`.tryliner.android.ui.components.AtmosphericBackdrop
 import `fun`.tryliner.android.ui.components.HumanCheckDialog
 import `fun`.tryliner.android.ui.components.LocalTrackDownloads
@@ -70,6 +90,9 @@ import `fun`.tryliner.android.ui.login.LoginScreen
 import `fun`.tryliner.android.ui.login.LoginViewModel
 import `fun`.tryliner.android.ui.player.MiniPlayerBar
 import `fun`.tryliner.android.ui.player.NowPlayingScreen
+import `fun`.tryliner.android.ui.playlist.ALBUM_PLAYLIST_PREFIX
+import `fun`.tryliner.android.ui.playlist.CATALOG_PLAYLIST_PREFIX
+import `fun`.tryliner.android.ui.playlist.DAILY_MIX_PREFIX
 import `fun`.tryliner.android.ui.playlist.LIKED_PLAYLIST_ID
 import `fun`.tryliner.android.ui.playlist.PlaylistDetailScreen
 import `fun`.tryliner.android.ui.playlist.PlaylistDetailViewModel
@@ -80,12 +103,27 @@ import `fun`.tryliner.android.ui.theme.LinerMotion
 import `fun`.tryliner.android.ui.theme.rememberReducedMotion
 
 object LinerRoutes {
+    const val TAB_HOME = "tab_home"
+    const val TAB_SEARCH = "tab_search"
+    const val TAB_LIBRARY = "tab_library"
+
     const val HOME = "home"
     const val LIBRARY = "library"
     const val SEARCH = "search"
-    const val PLAYLIST_DETAIL = "playlist/{playlistId}"
 
-    fun playlistDetail(playlistId: String): String = "playlist/$playlistId"
+    fun playlistRoutePattern(tabPrefix: String): String = "$tabPrefix/playlist/{playlistId}"
+    fun artistRoutePattern(tabPrefix: String): String = "$tabPrefix/artist/{artistId}"
+
+    fun playlistDetail(tabPrefix: String, playlistId: String): String =
+        "$tabPrefix/playlist/${Uri.encode(playlistId)}"
+    fun albumDetail(tabPrefix: String, albumId: String): String =
+        playlistDetail(tabPrefix, "$ALBUM_PLAYLIST_PREFIX$albumId")
+    fun catalogPlaylistDetail(tabPrefix: String, playlistId: String): String =
+        playlistDetail(tabPrefix, "$CATALOG_PLAYLIST_PREFIX$playlistId")
+    fun dailyMixDetail(tabPrefix: String, mixId: String): String =
+        playlistDetail(tabPrefix, "$DAILY_MIX_PREFIX$mixId")
+    fun artistDetail(tabPrefix: String, artistId: String): String =
+        "$tabPrefix/artist/${Uri.encode(artistId)}"
 }
 
 @Composable
@@ -116,6 +154,9 @@ private fun LinerAppContent(container: AppContainer) {
         val isLocalSlave by container.lanConnectManager.isLocalSlave.collectAsStateWithLifecycle()
         val likedIds by container.likedTrackIds.collectAsStateWithLifecycle()
         var isNowPlayingOpen by rememberSaveable { mutableStateOf(false) }
+        var menuTrack by remember { mutableStateOf<Track?>(null) }
+        val haptics = LocalHapticFeedback.current
+        val bottomBarHazeState = remember { HazeState() }
 
         val currentTrack = playbackState.currentTrack
         val isCurrentTrackLiked = currentTrack != null && likedIds.contains(currentTrack.id)
@@ -153,6 +194,10 @@ private fun LinerAppContent(container: AppContainer) {
         val bgScale = 1f - 0.055f * openFactor
         val bgCorner = (18f * openFactor).dp
 
+        CompositionLocalProvider(
+            LocalTrackMenuOpener provides { track -> menuTrack = track },
+            LocalAppHazeState provides bottomBarHazeState
+        ) {
         AtmosphericBackdrop(
             modifier = Modifier.fillMaxSize(),
             coverUrl = activeCoverUrl
@@ -175,13 +220,7 @@ private fun LinerAppContent(container: AppContainer) {
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .background(
-                                        Brush.verticalGradient(
-                                            0.0f to Color.Transparent,
-                                            0.65f to Color(0xCC0A0A0C),
-                                            1.0f to Color(0xFF0A0A0C)
-                                        )
-                                    )
+                                    .padding(bottom = 4.dp)
                             ) {
                                 MiniPlayerBar(
                                     playbackState = playbackState,
@@ -200,102 +239,78 @@ private fun LinerAppContent(container: AppContainer) {
                             }
                         }
 
-                        Column(
+                        val currentDestination = navBackStackEntry?.destination
+                        val isHome = currentDestination?.hierarchy?.any { it.route == LinerRoutes.TAB_HOME } == true
+                        val isSearch = currentDestination?.hierarchy?.any { it.route == LinerRoutes.TAB_SEARCH } == true
+                        val isLibrary = currentDestination?.hierarchy?.any { it.route == LinerRoutes.TAB_LIBRARY } == true
+
+                        fun navigateToTab(tabRoute: String, rootRoute: String, isCurrentlySelected: Boolean) {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            if (isCurrentlySelected) {
+                                if (currentRoute != rootRoute) {
+                                    navController.popBackStack(rootRoute, inclusive = false)
+                                }
+                                return
+                            }
+                            navController.navigate(tabRoute) {
+                                popUpTo(navController.graph.findStartDestination().id) {
+                                    saveState = true
+                                }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        }
+
+                        // Frosted-glass translucent + backdrop blur bottom navigation bar
+                        Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(Color(0xFF0A0A0C))
+                                .hazeEffect(
+                                    state = bottomBarHazeState,
+                                    style = HazeStyle(
+                                        backgroundColor = Color(0xFF0D0F14),
+                                        tint = HazeTint(Color(0xFF0D0F14).copy(alpha = 0.56f)),
+                                        blurRadius = 24.dp
+                                    )
+                                )
+                                .background(
+                                    Brush.verticalGradient(
+                                        0.0f to Color.White.copy(alpha = 0.05f),
+                                        0.04f to Color.Transparent,
+                                        1.0f to Color(0x550A0C10)
+                                    )
+                                )
                                 .navigationBarsPadding()
                         ) {
-                            HorizontalDivider(thickness = 0.5.dp, color = LinerColors.BorderAlpha14)
-                            NavigationBar(
-                                containerColor = Color(0xFF0A0A0C),
-                                contentColor = LinerColors.TextPrimary,
-                                tonalElevation = 0.dp,
-                                windowInsets = WindowInsets(0, 0, 0, 0)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(56.dp)
+                                    .padding(horizontal = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceEvenly
                             ) {
-                            val itemColors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = LinerColors.TextPrimary,
-                                selectedTextColor = LinerColors.TextPrimary,
-                                unselectedIconColor = LinerColors.TextTertiary,
-                                unselectedTextColor = LinerColors.TextTertiary,
-                                indicatorColor = Color.Transparent
-                            )
-
-                            val isHome = currentRoute == LinerRoutes.HOME
-                            NavigationBarItem(
-                                selected = isHome,
-                                onClick = {
-                                    navController.navigate(LinerRoutes.HOME) {
-                                        popUpTo(navController.graph.findStartDestination().id) {
-                                            saveState = true
-                                        }
-                                        launchSingleTop = true
-                                        restoreState = true
-                                    }
-                                },
-                                icon = {
-                                    Icon(
-                                        painter = painterResource(
-                                            if (isHome) R.drawable.ic_mgc_home_fill else R.drawable.ic_mgc_home_line
-                                        ),
-                                        contentDescription = "Home",
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                },
-                                label = { Text("Home") },
-                                colors = itemColors
-                            )
-
-                            val isSearch = currentRoute == LinerRoutes.SEARCH
-                            NavigationBarItem(
-                                selected = isSearch,
-                                onClick = {
-                                    navController.navigate(LinerRoutes.SEARCH) {
-                                        popUpTo(navController.graph.findStartDestination().id) {
-                                            saveState = true
-                                        }
-                                        launchSingleTop = true
-                                        restoreState = true
-                                    }
-                                },
-                                icon = {
-                                    Icon(
-                                        painter = painterResource(
-                                            if (isSearch) R.drawable.ic_mgc_search_fill else R.drawable.ic_mgc_search_line
-                                        ),
-                                        contentDescription = "Search",
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                },
-                                label = { Text("Search") },
-                                colors = itemColors
-                            )
-
-                            val isLibrary = currentRoute == LinerRoutes.LIBRARY ||
-                                currentRoute?.startsWith("playlist/") == true
-                            NavigationBarItem(
-                                selected = isLibrary,
-                                onClick = {
-                                    navController.navigate(LinerRoutes.LIBRARY) {
-                                        popUpTo(navController.graph.findStartDestination().id) {
-                                            saveState = true
-                                        }
-                                        launchSingleTop = true
-                                        restoreState = true
-                                    }
-                                },
-                                icon = {
-                                    Icon(
-                                        painter = painterResource(
-                                            if (isLibrary) R.drawable.ic_mgc_library_fill else R.drawable.ic_mgc_library_line
-                                        ),
-                                        contentDescription = "Library",
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                },
-                                label = { Text("Library") },
-                                colors = itemColors
-                            )
+                                LinerBottomNavItem(
+                                    label = "Главная",
+                                    iconRes = if (isHome) R.drawable.ic_mgc_home_fill else R.drawable.ic_mgc_home_line,
+                                    selected = isHome,
+                                    onClick = { navigateToTab(LinerRoutes.TAB_HOME, LinerRoutes.HOME, isHome) },
+                                    modifier = Modifier.weight(1f)
+                                )
+                                LinerBottomNavItem(
+                                    label = "Поиск",
+                                    iconRes = if (isSearch) R.drawable.ic_mgc_search_fill else R.drawable.ic_mgc_search_line,
+                                    selected = isSearch,
+                                    onClick = { navigateToTab(LinerRoutes.TAB_SEARCH, LinerRoutes.SEARCH, isSearch) },
+                                    modifier = Modifier.weight(1f)
+                                )
+                                LinerBottomNavItem(
+                                    label = "Медиатека",
+                                    iconRes = if (isLibrary) R.drawable.ic_mgc_library_fill else R.drawable.ic_mgc_library_line,
+                                    selected = isLibrary,
+                                    onClick = { navigateToTab(LinerRoutes.TAB_LIBRARY, LinerRoutes.LIBRARY, isLibrary) },
+                                    modifier = Modifier.weight(1f)
+                                )
                             }
                         }
                     }
@@ -303,85 +318,97 @@ private fun LinerAppContent(container: AppContainer) {
             ) { innerPadding ->
                 NavHost(
                     navController = navController,
-                    startDestination = LinerRoutes.HOME,
+                    startDestination = LinerRoutes.TAB_HOME,
                     enterTransition = {
                         fadeIn(tween(if (reducedMotion) 0 else LinerMotion.DURATION_FAST, easing = LinerMotion.EaseOut))
                     },
                     exitTransition = {
                         fadeOut(tween(if (reducedMotion) 0 else 110, easing = LinerMotion.EaseOut))
                     },
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .statusBarsPadding()
+                    modifier = Modifier.fillMaxSize()
                 ) {
-                    composable(LinerRoutes.HOME) {
-                        val homeViewModel: HomeViewModel = viewModel(
-                            factory = HomeViewModel.Factory(container)
-                        )
-                        HomeScreen(
-                            viewModel = homeViewModel,
-                            bottomContentPadding = PaddingValues(bottom = innerPadding.calculateBottomPadding())
-                        )
-                    }
-
-                    composable(LinerRoutes.LIBRARY) {
-                        val libraryViewModel: LibraryViewModel = viewModel(
-                            factory = LibraryViewModel.Factory(container)
-                        )
-                        LibraryScreen(
-                            viewModel = libraryViewModel,
-                            onOpenLikedTracks = {
-                                navController.navigate(LinerRoutes.playlistDetail(LIKED_PLAYLIST_ID))
-                            },
-                            onOpenPlaylist = { playlistId ->
-                                navController.navigate(LinerRoutes.playlistDetail(playlistId))
-                            },
-                            bottomContentPadding = PaddingValues(bottom = innerPadding.calculateBottomPadding())
-                        )
-                    }
-
-                    composable(LinerRoutes.SEARCH) {
-                        val searchViewModel: SearchViewModel = viewModel(
-                            factory = SearchViewModel.Factory(container)
-                        )
-                        SearchScreen(
-                            viewModel = searchViewModel,
-                            container = container,
-                            bottomContentPadding = PaddingValues(bottom = innerPadding.calculateBottomPadding())
-                        )
-                    }
-
-                    composable(
-                        route = LinerRoutes.PLAYLIST_DETAIL,
-                        arguments = listOf(navArgument("playlistId") { type = NavType.StringType }),
-                        enterTransition = {
-                            if (reducedMotion) {
-                                fadeIn(tween(0))
-                            } else {
-                                slideInHorizontally(LinerMotion.easeOutTween(LinerMotion.DURATION_NORMAL)) { it / 8 } +
-                                    fadeIn(LinerMotion.easeOutTween(180))
-                            }
-                        },
-                        popExitTransition = {
-                            if (reducedMotion) {
-                                fadeOut(tween(0))
-                            } else {
-                                slideOutHorizontally(LinerMotion.easeOutTween(200)) { it / 8 } +
-                                    fadeOut(LinerMotion.easeOutTween(160))
-                            }
+                    navigation(
+                        startDestination = LinerRoutes.HOME,
+                        route = LinerRoutes.TAB_HOME
+                    ) {
+                        composable(LinerRoutes.HOME) {
+                            val homeViewModel: HomeViewModel = viewModel(
+                                factory = HomeViewModel.Factory(container)
+                            )
+                            HomeScreen(
+                                viewModel = homeViewModel,
+                                onOpenDailyMix = { mix ->
+                                    navController.navigate(LinerRoutes.dailyMixDetail(LinerRoutes.TAB_HOME, mix.id))
+                                },
+                                bottomContentPadding = PaddingValues(bottom = innerPadding.calculateBottomPadding())
+                            )
                         }
-                    ) { backStackEntry ->
-                        val playlistId = backStackEntry.arguments?.getString("playlistId")
-                            ?: LIKED_PLAYLIST_ID
-                        val detailViewModel: PlaylistDetailViewModel = viewModel(
-                            key = "playlist_$playlistId",
-                            factory = PlaylistDetailViewModel.Factory(playlistId, container)
-                        )
-                        PlaylistDetailScreen(
-                            viewModel = detailViewModel,
+                        addTabDetailDestinations(
+                            tabPrefix = LinerRoutes.TAB_HOME,
+                            navController = navController,
                             container = container,
-                            onBack = { navController.popBackStack() },
-                            bottomContentPadding = PaddingValues(bottom = innerPadding.calculateBottomPadding())
+                            reducedMotion = reducedMotion,
+                            bottomPadding = innerPadding.calculateBottomPadding()
+                        )
+                    }
+
+                    navigation(
+                        startDestination = LinerRoutes.SEARCH,
+                        route = LinerRoutes.TAB_SEARCH
+                    ) {
+                        composable(LinerRoutes.SEARCH) {
+                            val searchViewModel: SearchViewModel = viewModel(
+                                factory = SearchViewModel.Factory(container)
+                            )
+                            SearchScreen(
+                                viewModel = searchViewModel,
+                                container = container,
+                                onOpenArtist = { artistId ->
+                                    navController.navigate(LinerRoutes.artistDetail(LinerRoutes.TAB_SEARCH, artistId))
+                                },
+                                onOpenAlbum = { albumId ->
+                                    navController.navigate(LinerRoutes.albumDetail(LinerRoutes.TAB_SEARCH, albumId))
+                                },
+                                onOpenCatalogPlaylist = { playlistId ->
+                                    navController.navigate(LinerRoutes.catalogPlaylistDetail(LinerRoutes.TAB_SEARCH, playlistId))
+                                },
+                                bottomContentPadding = PaddingValues(bottom = innerPadding.calculateBottomPadding())
+                            )
+                        }
+                        addTabDetailDestinations(
+                            tabPrefix = LinerRoutes.TAB_SEARCH,
+                            navController = navController,
+                            container = container,
+                            reducedMotion = reducedMotion,
+                            bottomPadding = innerPadding.calculateBottomPadding()
+                        )
+                    }
+
+                    navigation(
+                        startDestination = LinerRoutes.LIBRARY,
+                        route = LinerRoutes.TAB_LIBRARY
+                    ) {
+                        composable(LinerRoutes.LIBRARY) {
+                            val libraryViewModel: LibraryViewModel = viewModel(
+                                factory = LibraryViewModel.Factory(container)
+                            )
+                            LibraryScreen(
+                                viewModel = libraryViewModel,
+                                onOpenLikedTracks = {
+                                    navController.navigate(LinerRoutes.playlistDetail(LinerRoutes.TAB_LIBRARY, LIKED_PLAYLIST_ID))
+                                },
+                                onOpenPlaylist = { playlistId ->
+                                    navController.navigate(LinerRoutes.playlistDetail(LinerRoutes.TAB_LIBRARY, playlistId))
+                                },
+                                bottomContentPadding = PaddingValues(bottom = innerPadding.calculateBottomPadding())
+                            )
+                        }
+                        addTabDetailDestinations(
+                            tabPrefix = LinerRoutes.TAB_LIBRARY,
+                            navController = navController,
+                            container = container,
+                            reducedMotion = reducedMotion,
+                            bottomPadding = innerPadding.calculateBottomPadding()
                         )
                     }
                 }
@@ -438,10 +465,40 @@ private fun LinerAppContent(container: AppContainer) {
                         onNext = container.playerController::next,
                         onPrevious = container.playerController::previous,
                         onToggleShuffle = container.playerController::toggleShuffle,
-                        onSeekTo = container.playerController::seekTo
+                        onSeekTo = container.playerController::seekTo,
+                        onOpenArtist = { artistId ->
+                            val activePrefix = when {
+                                navBackStackEntry?.destination?.hierarchy?.any { it.route == LinerRoutes.TAB_SEARCH } == true -> LinerRoutes.TAB_SEARCH
+                                navBackStackEntry?.destination?.hierarchy?.any { it.route == LinerRoutes.TAB_LIBRARY } == true -> LinerRoutes.TAB_LIBRARY
+                                else -> LinerRoutes.TAB_HOME
+                            }
+                            isNowPlayingOpen = false
+                            navController.navigate(LinerRoutes.artistDetail(activePrefix, artistId))
+                        },
+                        onCycleRepeat = container.playerController::cycleRepeatMode,
+                        onPlayQueueIndex = container.playerController::playQueueIndex,
+                        onOpenTrackMenu = { t -> menuTrack = t }
                     )
                 }
             }
+
+            menuTrack?.let { selectedTrack ->
+                TrackActionSheet(
+                    track = selectedTrack,
+                    container = container,
+                    onOpenArtist = { artistId ->
+                        val activePrefix = when {
+                            navBackStackEntry?.destination?.hierarchy?.any { it.route == LinerRoutes.TAB_SEARCH } == true -> LinerRoutes.TAB_SEARCH
+                            navBackStackEntry?.destination?.hierarchy?.any { it.route == LinerRoutes.TAB_LIBRARY } == true -> LinerRoutes.TAB_LIBRARY
+                            else -> LinerRoutes.TAB_HOME
+                        }
+                        isNowPlayingOpen = false
+                        navController.navigate(LinerRoutes.artistDetail(activePrefix, artistId))
+                    },
+                    onDismiss = { menuTrack = null }
+                )
+            }
+        }
         }
     }
 
@@ -452,6 +509,120 @@ private fun LinerAppContent(container: AppContainer) {
             userAgent = container.userAgent,
             onSolved = container::submitHumanCheckResult,
             onCancel = container::cancelHumanCheck
+        )
+    }
+}
+
+@Composable
+private fun LinerBottomNavItem(
+    label: String,
+    iconRes: Int,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val contentColor = if (selected) LinerColors.TextPrimary else Color.White.copy(alpha = 0.45f)
+    Column(
+        modifier = modifier
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            )
+            .padding(vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            painter = painterResource(iconRes),
+            contentDescription = label,
+            tint = contentColor,
+            modifier = Modifier.size(22.dp)
+        )
+        Spacer(modifier = Modifier.height(3.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.5.sp),
+            color = contentColor,
+            maxLines = 1
+        )
+    }
+}
+
+private fun NavGraphBuilder.addTabDetailDestinations(
+    tabPrefix: String,
+    navController: NavHostController,
+    container: AppContainer,
+    reducedMotion: Boolean,
+    bottomPadding: Dp
+) {
+    composable(
+        route = LinerRoutes.playlistRoutePattern(tabPrefix),
+        arguments = listOf(navArgument("playlistId") { type = NavType.StringType }),
+        enterTransition = {
+            if (reducedMotion) {
+                fadeIn(tween(0))
+            } else {
+                slideInHorizontally(LinerMotion.easeOutTween(LinerMotion.DURATION_NORMAL)) { it / 8 } +
+                    fadeIn(LinerMotion.easeOutTween(180))
+            }
+        },
+        popExitTransition = {
+            if (reducedMotion) {
+                fadeOut(tween(0))
+            } else {
+                slideOutHorizontally(LinerMotion.easeOutTween(200)) { it / 8 } +
+                    fadeOut(LinerMotion.easeOutTween(160))
+            }
+        }
+    ) { backStackEntry ->
+        val playlistId = backStackEntry.arguments?.getString("playlistId")
+            ?: LIKED_PLAYLIST_ID
+        val detailViewModel: PlaylistDetailViewModel = viewModel(
+            key = "${tabPrefix}_playlist_$playlistId",
+            factory = PlaylistDetailViewModel.Factory(playlistId, container)
+        )
+        PlaylistDetailScreen(
+            viewModel = detailViewModel,
+            container = container,
+            onBack = { navController.popBackStack() },
+            bottomContentPadding = PaddingValues(bottom = bottomPadding)
+        )
+    }
+
+    composable(
+        route = LinerRoutes.artistRoutePattern(tabPrefix),
+        arguments = listOf(navArgument("artistId") { type = NavType.StringType }),
+        enterTransition = {
+            if (reducedMotion) {
+                fadeIn(tween(0))
+            } else {
+                slideInHorizontally(LinerMotion.easeOutTween(LinerMotion.DURATION_NORMAL)) { it / 8 } +
+                    fadeIn(LinerMotion.easeOutTween(180))
+            }
+        },
+        popExitTransition = {
+            if (reducedMotion) {
+                fadeOut(tween(0))
+            } else {
+                slideOutHorizontally(LinerMotion.easeOutTween(200)) { it / 8 } +
+                    fadeOut(LinerMotion.easeOutTween(160))
+            }
+        }
+    ) { backStackEntry ->
+        val artistId = backStackEntry.arguments?.getString("artistId").orEmpty()
+        val artistViewModel: ArtistViewModel = viewModel(
+            key = "${tabPrefix}_artist_$artistId",
+            factory = ArtistViewModel.Factory(artistId, container)
+        )
+        ArtistScreen(
+            viewModel = artistViewModel,
+            container = container,
+            onBack = { navController.popBackStack() },
+            onOpenAlbum = { albumId ->
+                navController.navigate(LinerRoutes.albumDetail(tabPrefix, albumId))
+            },
+            bottomContentPadding = PaddingValues(bottom = bottomPadding)
         )
     }
 }

@@ -1,6 +1,8 @@
 package `fun`.tryliner.android.ui.home
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -14,10 +16,27 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.HazeStyle
+import dev.chrisbanes.haze.HazeTint
+import dev.chrisbanes.haze.hazeEffect
+import dev.chrisbanes.haze.hazeSource
+import `fun`.tryliner.android.ui.components.LocalAppHazeState
+import `fun`.tryliner.android.ui.components.TrackListSkeleton
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
@@ -37,6 +56,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
@@ -56,117 +76,110 @@ import `fun`.tryliner.android.ui.theme.LinerColors
 import `fun`.tryliner.android.ui.theme.LinerShapes
 import `fun`.tryliner.android.ui.theme.pressScale
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     viewModel: HomeViewModel,
+    onOpenDailyMix: (DailyMixItem) -> Unit = { viewModel.playDailyMix(it) },
     bottomContentPadding: PaddingValues = PaddingValues(0.dp)
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val likedIds by viewModel.likedTrackIds.collectAsStateWithLifecycle()
     val playbackState by viewModel.playbackState.collectAsStateWithLifecycle()
+    val haptics = LocalHapticFeedback.current
+    val listState = rememberLazyListState()
+    val localFallbackHaze = remember { HazeState() }
+    val headerHazeState = LocalAppHazeState.current ?: localFallbackHaze
+    val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val headerOverlayHeight = statusBarTop + 62.dp
 
     val currentPlayingTrackId = playbackState.currentTrack?.id
 
-    Column(
+    Box(
         modifier = Modifier.fillMaxSize()
     ) {
-        Spacer(modifier = Modifier.height(14.dp))
-
-        Row(
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+                .fillMaxSize()
+                .hazeSource(state = headerHazeState)
         ) {
-            Text(
-                text = "Home",
-                style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
-                color = LinerColors.TextPrimary
-            )
-
-            IconButton(
-                onClick = viewModel::refresh,
-                enabled = !state.isLoading
-            ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_mgc_refresh_line),
-                    contentDescription = "Refresh",
-                    tint = LinerColors.TextSecondary,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(6.dp))
-
-        when {
-            state.isLoading && state.isEmpty -> {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator(color = LinerColors.AccentPrimary)
-                }
-            }
-
-            state.errorMessage != null && state.isEmpty -> {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 16.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    LinerPanel(
-                        shape = LinerShapes.Panel,
-                        containerColor = Color.White.copy(alpha = 0.07f),
-                        borderColor = Color.Transparent
+            when {
+                state.isLoading && state.isEmpty -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(top = headerOverlayHeight + 8.dp)
                     ) {
-                        Column(
-                            modifier = Modifier.padding(24.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
+                        TrackListSkeleton(count = 8)
+                    }
+                }
+
+                state.errorMessage != null && state.isEmpty -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 16.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        LinerPanel(
+                            shape = LinerShapes.Panel,
+                            containerColor = Color.White.copy(alpha = 0.07f),
+                            borderColor = Color.Transparent
                         ) {
-                            Text(
-                                text = state.errorMessage.orEmpty(),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = LinerColors.TextSecondary
-                            )
-                            Spacer(modifier = Modifier.height(14.dp))
-                            LinerGlassPillButton(onClick = viewModel::refresh) {
-                                Text("Try again")
+                            Column(
+                                modifier = Modifier.padding(24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = state.errorMessage.orEmpty(),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = LinerColors.TextSecondary
+                                )
+                                Spacer(modifier = Modifier.height(14.dp))
+                                LinerGlassPillButton(onClick = viewModel::refresh) {
+                                    Text("Попробовать снова")
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            state.isEmpty -> {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = "Nothing to show yet",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = LinerColors.TextSecondary
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        LinerGlassPillButton(onClick = viewModel::refresh) {
-                            Text("Refresh")
+                state.isEmpty -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = "Пока здесь пусто",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = LinerColors.TextSecondary
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            LinerGlassPillButton(onClick = viewModel::refresh) {
+                                Text("Обновить")
+                            }
                         }
                     }
                 }
-            }
 
-            else -> {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(
-                        top = 4.dp,
-                        bottom = (bottomContentPadding.calculateBottomPadding() + 24.dp).coerceAtLeast(148.dp)
-                    )
-                ) {
+                else -> {
+                    PullToRefreshBox(
+                        isRefreshing = state.isLoading && !state.isEmpty,
+                        onRefresh = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            viewModel.refresh()
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(
+                                top = headerOverlayHeight + 6.dp,
+                                bottom = (bottomContentPadding.calculateBottomPadding() + 24.dp).coerceAtLeast(148.dp)
+                            )
+                        ) {
                     // Compact 2-column quick-access grid (Spotify / Desktop style, zero vertical bloat)
                     val quickTracks = if (state.recentTracks.isNotEmpty()) {
                         state.recentTracks.take(6)
@@ -215,7 +228,7 @@ fun HomeScreen(
                     if (state.dailyMixes.isNotEmpty()) {
                         item(key = "mixes_header") {
                             HomeSectionHeader(
-                                title = "Your Mixes",
+                                title = "Твои миксы",
                                 icon = Icons.Rounded.AutoAwesome
                             )
                         }
@@ -231,7 +244,7 @@ fun HomeScreen(
                                 ) { _, mix ->
                                     DailyMixCard(
                                         mix = mix,
-                                        onClick = { viewModel.playDailyMix(mix) }
+                                        onClick = { onOpenDailyMix(mix) }
                                     )
                                 }
                             }
@@ -243,7 +256,7 @@ fun HomeScreen(
                     if (state.popularTracks.isNotEmpty()) {
                         item(key = "trending_header") {
                             HomeSectionHeader(
-                                title = "Trending Now",
+                                title = "В тренде",
                                 icon = Icons.Rounded.LocalFireDepartment
                             )
                         }
@@ -285,7 +298,7 @@ fun HomeScreen(
                     if (state.recentTracks.isNotEmpty()) {
                         item(key = "recent_header") {
                             HomeSectionHeader(
-                                title = "Continue Listening",
+                                title = "Недавние",
                                 icon = Icons.Rounded.History
                             )
                         }
@@ -313,7 +326,7 @@ fun HomeScreen(
                     if (state.mostPlayedTracks.isNotEmpty()) {
                         item(key = "most_played_header") {
                             HomeSectionHeader(
-                                title = "Most Played",
+                                title = "Чаще всего слушаете",
                                 icon = Icons.Rounded.EmojiEvents
                             )
                         }
@@ -337,6 +350,61 @@ fun HomeScreen(
                             Spacer(modifier = Modifier.height(16.dp))
                         }
                     }
+                }
+                }
+            }
+        }
+        }
+
+        // Frosted-glass translucent + backdrop blur top bar (lighter glass tint)
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .hazeEffect(
+                    state = headerHazeState,
+                    style = HazeStyle(
+                        backgroundColor = Color(0xFF14171F),
+                        tint = HazeTint(Color(0xFF14171F).copy(alpha = 0.28f)),
+                        blurRadius = 24.dp
+                    )
+                )
+                .background(
+                    Brush.verticalGradient(
+                        0.0f to Color.White.copy(alpha = 0.04f),
+                        0.96f to Color.Transparent,
+                        1.0f to Color.White.copy(alpha = 0.05f)
+                    )
+                )
+                .statusBarsPadding()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(58.dp)
+                    .padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "vasyan",
+                    style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
+                    color = LinerColors.TextPrimary
+                )
+
+                IconButton(
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        viewModel.refresh()
+                    },
+                    enabled = !state.isLoading
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_mgc_refresh_line),
+                        contentDescription = "Обновить",
+                        tint = LinerColors.TextSecondary,
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
             }
         }
@@ -373,7 +441,7 @@ private fun QuickAccessTile(
                 lineHeight = 15.sp,
                 fontWeight = FontWeight.SemiBold
             ),
-            color = if (isPlayingCurrent) Color(0xFF1ED760) else LinerColors.TextPrimary,
+            color = LinerColors.TextPrimary,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier
@@ -440,7 +508,7 @@ private fun SquareTrackCard(
                     modifier = Modifier
                         .size(132.dp)
                         .clip(cardShape)
-                        .background(Color.Black.copy(alpha = 0.45f)),
+                        .background(LinerColors.AmbientBase.copy(alpha = 0.52f)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(

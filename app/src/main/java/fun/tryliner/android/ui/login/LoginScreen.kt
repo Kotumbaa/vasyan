@@ -120,10 +120,10 @@ fun LoginScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     val fieldColors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Color.White.copy(alpha = 0.16f),
+                        focusedBorderColor = Color.Transparent,
                         unfocusedBorderColor = Color.Transparent,
-                        focusedContainerColor = LinerColors.Fill,
-                        unfocusedContainerColor = LinerColors.FillSubtle,
+                        focusedContainerColor = LinerColors.FillHover,
+                        unfocusedContainerColor = LinerColors.Fill,
                         focusedTextColor = LinerColors.TextPrimary,
                         unfocusedTextColor = LinerColors.TextPrimary,
                         focusedLabelColor = LinerColors.TextSecondary,

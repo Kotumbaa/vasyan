@@ -3,7 +3,9 @@ package `fun`.tryliner.android
 import android.content.Context
 import android.webkit.WebSettings
 import `fun`.tryliner.android.core.crypto.WasmRequestSigner
+import `fun`.tryliner.android.core.model.DailyMixItem
 import `fun`.tryliner.android.core.model.Track
+import java.util.concurrent.ConcurrentHashMap
 import `fun`.tryliner.android.core.network.HumanCheckProvider
 import `fun`.tryliner.android.core.network.HumanCheckRequest
 import `fun`.tryliner.android.core.network.HumanCheckResult
@@ -74,6 +76,14 @@ class AppContainer(context: Context) {
 
     private val _likedTrackIds = MutableStateFlow<Set<String>>(emptySet())
     val likedTrackIds: StateFlow<Set<String>> = _likedTrackIds.asStateFlow()
+
+    private val cachedDailyMixes = ConcurrentHashMap<String, DailyMixItem>()
+
+    fun cacheDailyMixes(mixes: List<DailyMixItem>) {
+        mixes.forEach { cachedDailyMixes[it.id] = it }
+    }
+
+    fun getCachedDailyMix(id: String): DailyMixItem? = cachedDailyMixes[id]
 
     private suspend fun requestHumanCheck(request: HumanCheckRequest): HumanCheckResult? {
         val deferred = CompletableDeferred<HumanCheckResult?>()

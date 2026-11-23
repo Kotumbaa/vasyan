@@ -13,7 +13,22 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.HazeStyle
+import dev.chrisbanes.haze.HazeTint
+import dev.chrisbanes.haze.hazeEffect
+import dev.chrisbanes.haze.hazeSource
+import `fun`.tryliner.android.ui.components.LocalAppHazeState
+import `fun`.tryliner.android.ui.components.TrackListSkeleton
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -43,13 +58,18 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -71,6 +91,7 @@ import `fun`.tryliner.android.ui.theme.LinerShapes
 
 private const val PLAYLIST_TITLE_MAX_LENGTH = 40
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(
     viewModel: LibraryViewModel,
@@ -85,53 +106,34 @@ fun LibraryScreen(
     val filteredLikedTracks = state.filteredLikedTracks
     val downloadedTracks by viewModel.downloadedTracks.collectAsStateWithLifecycle()
     val hasDownloads = downloadedTracks.isNotEmpty()
+    val haptics = LocalHapticFeedback.current
+    val localFallbackHaze = remember { HazeState() }
+    val headerHazeState = LocalAppHazeState.current ?: localFallbackHaze
+    val density = LocalDensity.current
+    val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    var topBarHeightPx by remember { mutableIntStateOf(0) }
+    val topBarHeightDp = if (topBarHeightPx > 0) {
+        with(density) { topBarHeightPx.toDp() }
+    } else {
+        statusBarTop + 76.dp
+    }
 
-    Column(
-        modifier = Modifier.fillMaxSize()
-    ) {
-        // Top bar with "vasyan" / "Library" title + subtle glass icon buttons
-        Row(
+    Box(modifier = Modifier.fillMaxSize()) {
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+                .fillMaxSize()
+                .hazeSource(state = headerHazeState)
         ) {
-            Column {
-                Text(
-                    text = "vasyan",
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        letterSpacing = 1.2.sp,
-                        fontWeight = FontWeight.Medium
-                    ),
-                    color = Color.White.copy(alpha = 0.50f)
-                )
-                Text(
-                    text = "Library",
-                    style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
-                    color = LinerColors.TextPrimary
-                )
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                GlassCircleIconButton(
-                    iconRes = R.drawable.ic_mgc_refresh_line,
-                    contentDescription = "Refresh",
-                    onClick = viewModel::refresh
-                )
-                GlassCircleIconButton(
-                    iconRes = R.drawable.ic_mgc_exit_line,
-                    contentDescription = "Sign out",
-                    onClick = viewModel::logout
-                )
-            }
-        }
-
-        when {
-            state.isLoading && state.playlists.isEmpty() && state.likedTracks.isEmpty() && !hasDownloads -> {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = LinerColors.AccentPrimary)
+            when {
+                state.isLoading && state.playlists.isEmpty() && state.likedTracks.isEmpty() && !hasDownloads -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(top = topBarHeightDp + 12.dp)
+                    ) {
+                        TrackListSkeleton(count = 8)
+                    }
                 }
-            }
             state.errorMessage != null && state.playlists.isEmpty() && state.likedTracks.isEmpty() && !hasDownloads -> {
                 Box(
                     modifier = Modifier
@@ -155,17 +157,25 @@ fun LibraryScreen(
                             )
                             Spacer(modifier = Modifier.height(10.dp))
                             TextButton(onClick = viewModel::refresh) {
-                                Text("Retry", color = LinerColors.AccentPrimary)
+                                Text("Повторить", color = LinerColors.AccentPrimary)
                             }
                         }
                     }
                 }
             }
             else -> {
+                PullToRefreshBox(
+                    isRefreshing = state.isLoading && (state.playlists.isNotEmpty() || state.likedTracks.isNotEmpty()),
+                    onRefresh = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        viewModel.refresh()
+                    },
+                    modifier = Modifier.fillMaxSize()
+                ) {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(
-                        top = 6.dp,
+                        top = topBarHeightDp + 10.dp,
                         bottom = (bottomContentPadding.calculateBottomPadding() + 24.dp).coerceAtLeast(148.dp)
                     ),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -194,7 +204,7 @@ fun LibraryScreen(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 Text(
-                                    text = "Playlists",
+                                    text = "Плейлисты",
                                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                                     color = LinerColors.TextPrimary
                                 )
@@ -210,34 +220,26 @@ fun LibraryScreen(
 
                     if (state.playlists.isEmpty()) {
                         item(key = "playlists_empty") {
-                            Surface(
-                                onClick = viewModel::openCreatePlaylistDialog,
-                                shape = LinerShapes.Item,
-                                color = Color.White.copy(alpha = 0.05f),
+                            Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 4.dp)
+                                    .clip(LinerShapes.Item)
+                                    .clickable(onClick = viewModel::openCreatePlaylistDialog)
+                                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 16.dp, vertical = 14.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.LibraryMusic,
-                                        contentDescription = null,
-                                        tint = Color.White.copy(alpha = 0.50f),
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        text = "No playlists yet — tap to create one",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = Color.White.copy(alpha = 0.55f)
-                                    )
-                                }
+                                Icon(
+                                    imageVector = Icons.Rounded.LibraryMusic,
+                                    contentDescription = null,
+                                    tint = Color.White.copy(alpha = 0.42f),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(
+                                    text = "Плейлистов пока нет — нажмите, чтобы создать",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color.White.copy(alpha = 0.50f)
+                                )
                             }
                         }
                     } else {
@@ -271,7 +273,7 @@ fun LibraryScreen(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 Text(
-                                    text = "Recently Played",
+                                    text = "Недавние",
                                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                                     color = LinerColors.TextPrimary
                                 )
@@ -386,13 +388,13 @@ fun LibraryScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text(
-                                    text = "Liked Tracks",
+                                    text = "Понравившиеся",
                                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                                     color = LinerColors.TextPrimary
                                 )
                                 TextButton(onClick = onOpenLikedTracks) {
                                     Text(
-                                        text = "See all",
+                                        text = "Все",
                                         style = MaterialTheme.typography.labelLarge,
                                         color = LinerColors.TextSecondary
                                     )
@@ -429,7 +431,7 @@ fun LibraryScreen(
                                     )
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Text(
-                                        text = "No tracks matching \"${state.searchQuery.trim()}\"",
+                                        text = "Ничего не найдено по «${state.searchQuery.trim()}»",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = LinerColors.TextSecondary,
                                         maxLines = 1,
@@ -477,6 +479,74 @@ fun LibraryScreen(
                             }
                         }
                     }
+                }
+                }
+            }
+        }
+        }
+
+        // Frosted-glass translucent + backdrop blur top bar (lighter glass tint)
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .onSizeChanged { topBarHeightPx = it.height }
+                .hazeEffect(
+                    state = headerHazeState,
+                    style = HazeStyle(
+                        backgroundColor = Color(0xFF14171F),
+                        tint = HazeTint(Color(0xFF14171F).copy(alpha = 0.28f)),
+                        blurRadius = 24.dp
+                    )
+                )
+                .background(
+                    Brush.verticalGradient(
+                        0.0f to Color.White.copy(alpha = 0.04f),
+                        0.96f to Color.Transparent,
+                        1.0f to Color.White.copy(alpha = 0.05f)
+                    )
+                )
+                .statusBarsPadding()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column {
+                    Text(
+                        text = "vasyan",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            letterSpacing = 1.2.sp,
+                            fontWeight = FontWeight.Medium
+                        ),
+                        color = Color.White.copy(alpha = 0.50f)
+                    )
+                    Text(
+                        text = "Медиатека",
+                        style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
+                        color = LinerColors.TextPrimary
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    GlassCircleIconButton(
+                        iconRes = R.drawable.ic_mgc_refresh_line,
+                        contentDescription = "Обновить",
+                        onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            viewModel.refresh()
+                        }
+                    )
+                    GlassCircleIconButton(
+                        iconRes = R.drawable.ic_mgc_exit_line,
+                        contentDescription = "Выйти",
+                        onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            viewModel.logout()
+                        }
+                    )
                 }
             }
         }
@@ -536,7 +606,7 @@ private fun NewPlaylistPillButton(
                 modifier = Modifier.size(16.dp)
             )
             Text(
-                text = "New Playlist",
+                text = "Новый плейлист",
                 style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
                 color = LinerColors.TextPrimary
             )
@@ -558,7 +628,7 @@ private fun PlaylistSearchPill(
         onValueChange = onQueryChange,
         placeholder = {
             Text(
-                text = "Search in playlist",
+                text = "Поиск в понравившихся",
                 style = MaterialTheme.typography.bodyMedium,
                 color = Color.White.copy(alpha = 0.45f)
             )
@@ -640,7 +710,7 @@ private fun LikedTracksHeroCard(
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Liked Tracks",
+                    text = "Понравившиеся",
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                     color = Color.White,
                     maxLines = 1,
@@ -675,7 +745,7 @@ private fun LikedTracksHeroCard(
                         modifier = Modifier.size(18.dp)
                     )
                     Text(
-                        text = "Play",
+                        text = "Слушать",
                         style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
                         color = Color(0xFF0D0F14)
                     )
@@ -801,13 +871,13 @@ private fun CreatePlaylistDialog(
                     .padding(20.dp)
             ) {
                 Text(
-                    text = "New Playlist",
+                    text = "Новый плейлист",
                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                     color = LinerColors.TextPrimary
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "Create a playlist from scratch",
+                    text = "Создать свой плейлист",
                     style = MaterialTheme.typography.bodySmall,
                     color = LinerColors.TextSecondary
                 )
@@ -836,7 +906,7 @@ private fun CreatePlaylistDialog(
                     },
                     placeholder = {
                         Text(
-                            text = "Playlist name",
+                            text = "Название плейлиста",
                             color = Color.White.copy(alpha = 0.45f)
                         )
                     },
@@ -866,7 +936,7 @@ private fun CreatePlaylistDialog(
                     },
                     placeholder = {
                         Text(
-                            text = "Description (optional)",
+                            text = "Описание (необязательно)",
                             color = Color.White.copy(alpha = 0.45f)
                         )
                     },
@@ -899,7 +969,7 @@ private fun CreatePlaylistDialog(
                         enabled = !isCreating
                     ) {
                         Text(
-                            text = "Cancel",
+                            text = "Отмена",
                             color = LinerColors.TextSecondary
                         )
                     }
@@ -923,7 +993,7 @@ private fun CreatePlaylistDialog(
                             )
                         } else {
                             Text(
-                                text = "Create",
+                                text = "Создать",
                                 style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold)
                             )
                         }

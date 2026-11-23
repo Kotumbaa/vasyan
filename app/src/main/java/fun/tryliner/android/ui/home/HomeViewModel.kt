@@ -70,6 +70,9 @@ class HomeViewModel(
             }
 
             val mixes = result.mixes.getOrNull()?.items.orEmpty()
+            if (mixes.isNotEmpty()) {
+                container.cacheDailyMixes(mixes)
+            }
             val popularTracks = result.popular7d.getOrNull()?.items
                 .orEmpty()
                 .map { item ->

@@ -3,6 +3,7 @@ package `fun`.tryliner.android.ui.theme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Color
 
 private val LinerDarkColorScheme = darkColorScheme(
     primary = LinerColors.AccentPrimary,
@@ -15,8 +16,9 @@ private val LinerDarkColorScheme = darkColorScheme(
     onSurface = LinerColors.TextPrimary,
     surfaceVariant = LinerColors.BgPanel,
     onSurfaceVariant = LinerColors.TextSecondary,
-    outline = LinerColors.BorderAlpha20,
-    outlineVariant = LinerColors.BorderAlpha33,
+    surfaceContainerHigh = LinerColors.BgElevated,
+    outline = Color.Transparent,
+    outlineVariant = LinerColors.BorderAlpha20,
     error = LinerColors.AccentWarning,
     onError = LinerColors.BtnPrimaryText
 )

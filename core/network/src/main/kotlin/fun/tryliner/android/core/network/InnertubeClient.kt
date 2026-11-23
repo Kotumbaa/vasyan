@@ -7,6 +7,7 @@ import `fun`.tryliner.android.core.model.SearchResult
 import `fun`.tryliner.android.core.model.TrackAlbum
 import `fun`.tryliner.android.core.model.TrackArtist
 import `fun`.tryliner.android.core.model.TrackDetails
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -275,7 +276,13 @@ class InnertubeClient(
                 } catch (err: InnertubeException) {
                     if (err.status == 403) refusedCount++
                     failures.add("${profile.clientName}: ${err.message}")
+                    if (err.status == 0) {
+                        // Stream host (e.g. googlevideo.com) is unreachable/blocked on this network;
+                        // fail fast so caller can fall back to relay without burning 6x retries.
+                        throw InnertubeException("Direct audio resolution failed (${failures.joinToString("; ")}).", 502)
+                    }
                 } catch (err: Exception) {
+                    if (err is CancellationException) throw err
                     failures.add("${profile.clientName}: ${err.message ?: err::class.simpleName}")
                 }
             }
@@ -299,7 +306,7 @@ class InnertubeClient(
             visitorData = null
             visitorDataExpiresAtMs = 0L
         }
-        runCatching {
+        try {
             val req = Request.Builder()
                 .url("https://www.youtube.com/sw.js_data")
                 .header(
@@ -308,7 +315,11 @@ class InnertubeClient(
                 )
                 .get()
                 .build()
-            httpClient.newCall(req).await().use { res ->
+            val quickClient = httpClient.newBuilder()
+                .connectTimeout(3, TimeUnit.SECONDS)
+                .readTimeout(3, TimeUnit.SECONDS)
+                .build()
+            quickClient.newCall(req).await().use { res ->
                 if (!res.isSuccessful) return
                 val text = res.body?.string().orEmpty()
                 val parsed = VISITOR_DATA_REGEX.find(text)?.value
@@ -317,6 +328,10 @@ class InnertubeClient(
                     visitorDataExpiresAtMs = System.currentTimeMillis() + VISITOR_SESSION_TTL_MS
                 }
             }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // visitorData is optional; do not block playback if YouTube is unreachable.
         }
     }
 
@@ -359,8 +374,12 @@ class InnertubeClient(
             .setQueryParameter("range", "$offset-$offset")
             .build()
         val req = Request.Builder().url(probeUrl).get().build()
+        val probeClient = httpClient.newBuilder()
+            .connectTimeout(3, TimeUnit.SECONDS)
+            .readTimeout(3, TimeUnit.SECONDS)
+            .build()
         val res = try {
-            httpClient.newCall(req).await()
+            probeClient.newCall(req).await()
         } catch (e: IOException) {
             throw InnertubeException("stream url unreachable: ${e.message}", 0)
         }

@@ -3,7 +3,19 @@ package `fun`.tryliner.android.ui.components
 import android.os.Build
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import `fun`.tryliner.android.ui.theme.LinerMotion
 import `fun`.tryliner.android.ui.theme.rememberReducedMotion
 import androidx.compose.foundation.BorderStroke
@@ -28,6 +40,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.staticCompositionLocalOf
+import dev.chrisbanes.haze.HazeState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.BlurredEdgeTreatment
@@ -51,6 +65,8 @@ import `fun`.tryliner.android.ui.theme.LinerColors
 import `fun`.tryliner.android.ui.theme.LinerShapes
 import kotlin.math.max
 
+val LocalAppHazeState = staticCompositionLocalOf<HazeState?> { null }
+
 @Composable
 fun AtmosphericBackdrop(
     modifier: Modifier = Modifier,
@@ -66,8 +82,8 @@ fun AtmosphericBackdrop(
         animationSpec = LinerMotion.easeOutTween(ambientDuration),
         label = "atmosphericBackdropTint"
     )
-    // Desktop PageCoverBackdrop samples cover color at FILL_DARKEN=0.38 across the entire viewport
-    val fullScreenBase = lerp(LinerColors.AmbientBase, animatedTint, 0.52f)
+    val fullScreenBase = LinerColors.AmbientBase
+    val softTopTint = lerp(LinerColors.AmbientBase, animatedTint, 0.62f)
 
     Box(
         modifier = modifier
@@ -88,7 +104,7 @@ fun AtmosphericBackdrop(
                     filterQuality = FilterQuality.High,
                     modifier = Modifier
                         .fillMaxSize()
-                        .alpha(0.36f)
+                        .alpha(0.22f)
                 )
             }
         }
@@ -97,53 +113,41 @@ fun AtmosphericBackdrop(
             modifier = Modifier
                 .fillMaxSize()
                 .drawBehind {
-                    // Full-screen smooth gradient from top to bottom (matching desktop full-window backdrop)
+                    // Desaturated top ambient glow gently dissolving into #0D0F14 across 55% height
                     drawRect(
                         brush = Brush.verticalGradient(
-                            0.00f to animatedTint.copy(alpha = 0.56f),
-                            0.35f to animatedTint.copy(alpha = 0.36f),
-                            0.70f to fullScreenBase.copy(alpha = 0.72f),
-                            1.00f to fullScreenBase.copy(alpha = 0.90f),
+                            0.00f to softTopTint.copy(alpha = 0.78f),
+                            0.28f to softTopTint.copy(alpha = 0.42f),
+                            0.58f to fullScreenBase.copy(alpha = 0.94f),
+                            1.00f to fullScreenBase,
                             startY = 0f,
                             endY = size.height
                         )
                     )
 
                     val maxDim = max(size.width, size.height)
-                    // Primary top-left ambient glow
+                    // Primary top-left desaturated ambient glow
                     drawRect(
                         brush = Brush.radialGradient(
                             colors = listOf(
-                                animatedTint.copy(alpha = 0.44f),
-                                animatedTint.copy(alpha = 0.14f),
+                                animatedTint.copy(alpha = 0.34f),
+                                animatedTint.copy(alpha = 0.10f),
                                 Color.Transparent
                             ),
-                            center = Offset(size.width * 0.22f, size.height * 0.08f),
-                            radius = maxDim * 0.85f
-                        )
-                    )
-
-                    // Secondary mid-right ambient glow
-                    drawRect(
-                        brush = Brush.radialGradient(
-                            colors = listOf(
-                                animatedTint.copy(alpha = 0.28f),
-                                Color.Transparent
-                            ),
-                            center = Offset(size.width * 0.88f, size.height * 0.38f),
+                            center = Offset(size.width * 0.24f, size.height * 0.06f),
                             radius = maxDim * 0.72f
                         )
                     )
 
-                    // Lower-left subtle ambient glow so bottom half keeps rich gradient depth
+                    // Subtle secondary upper-right ambient glow
                     drawRect(
                         brush = Brush.radialGradient(
                             colors = listOf(
-                                animatedTint.copy(alpha = 0.24f),
+                                animatedTint.copy(alpha = 0.20f),
                                 Color.Transparent
                             ),
-                            center = Offset(size.width * 0.18f, size.height * 0.84f),
-                            radius = maxDim * 0.78f
+                            center = Offset(size.width * 0.86f, size.height * 0.26f),
+                            radius = maxDim * 0.60f
                         )
                     )
                 },
@@ -257,19 +261,95 @@ fun LikedTracksArtwork(
             .background(
                 Brush.linearGradient(
                     colors = listOf(
-                        LinerColors.LikedVioletStart,
-                        LinerColors.LikedVioletEnd
+                        Color(0xFF232735),
+                        Color(0xFF151822),
+                        Color(0xFF0E1017)
                     )
                 )
-            ),
+            )
+            .drawBehind {
+                drawRect(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            Color.White.copy(alpha = 0.16f),
+                            Color.Transparent
+                        ),
+                        center = Offset(this.size.width * 0.28f, this.size.height * 0.24f),
+                        radius = this.size.maxDimension * 0.85f
+                    )
+                )
+            },
         contentAlignment = Alignment.Center
     ) {
         Icon(
             painter = painterResource(R.drawable.ic_mgc_heart_fill),
             contentDescription = null,
-            tint = Color.White.copy(alpha = 0.70f),
-            modifier = Modifier.size(size * 0.42f)
+            tint = Color.White.copy(alpha = 0.88f),
+            modifier = Modifier.size(size * 0.40f)
         )
+    }
+}
+
+@Composable
+fun LinerShimmerBox(
+    modifier: Modifier = Modifier,
+    shape: Shape = RoundedCornerShape(8.dp)
+) {
+    val transition = rememberInfiniteTransition(label = "shimmer")
+    val alpha by transition.animateFloat(
+        initialValue = 0.05f,
+        targetValue = 0.13f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 850),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "shimmerAlpha"
+    )
+    Box(
+        modifier = modifier
+            .clip(shape)
+            .background(Color.White.copy(alpha = alpha))
+    )
+}
+
+@Composable
+fun TrackListSkeleton(
+    count: Int = 7,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        repeat(count) { idx ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                LinerShimmerBox(
+                    modifier = Modifier.size(44.dp),
+                    shape = LinerShapes.Tile
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    LinerShimmerBox(
+                        modifier = Modifier
+                            .fillMaxWidth(if (idx % 2 == 0) 0.62f else 0.48f)
+                            .height(13.dp)
+                    )
+                    LinerShimmerBox(
+                        modifier = Modifier
+                            .fillMaxWidth(if (idx % 2 == 0) 0.38f else 0.52f)
+                            .height(10.dp)
+                    )
+                }
+            }
+        }
     }
 }
 

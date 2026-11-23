@@ -116,8 +116,18 @@ import `fun`.tryliner.android.core.lyrics.SyncedLyrics
 import `fun`.tryliner.android.core.model.Cover
 import `fun`.tryliner.android.core.model.Track
 import `fun`.tryliner.android.core.model.TrackArtist
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.material.icons.automirrored.rounded.QueueMusic
+import androidx.compose.material.icons.rounded.MoreHoriz
+import androidx.compose.material.icons.rounded.Repeat
+import androidx.compose.material.icons.rounded.RepeatOne
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import `fun`.tryliner.android.playback.PlaybackUiState
 import `fun`.tryliner.android.playback.RemotePlaybackState
+import `fun`.tryliner.android.playback.RepeatMode
 import `fun`.tryliner.android.ui.components.LinerCoverArt
 import `fun`.tryliner.android.ui.components.formatDurationMs
 import `fun`.tryliner.android.ui.components.rememberCoverAmbient
@@ -125,6 +135,7 @@ import `fun`.tryliner.android.ui.theme.LinerColors
 
 private val BackdropBase = Color(0xFF0D0F14)
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NowPlayingScreen(
     playbackState: PlaybackUiState,
@@ -136,6 +147,10 @@ fun NowPlayingScreen(
     onPrevious: () -> Unit,
     onToggleShuffle: () -> Unit,
     onSeekTo: (Long) -> Unit,
+    onOpenArtist: (String) -> Unit = {},
+    onCycleRepeat: () -> Unit = {},
+    onPlayQueueIndex: (Int) -> Unit = {},
+    onOpenTrackMenu: (Track) -> Unit = {},
     onDragDelta: ((Float) -> Unit)? = null,
     onDragRelease: ((Float) -> Unit)? = null,
 ) {
@@ -183,6 +198,7 @@ fun NowPlayingScreen(
         playbackState.durationMs
     }
     var showLyrics by remember { mutableStateOf(false) }
+    var showQueueSheet by remember { mutableStateOf(false) }
     var scrubbingPositionMs by remember { mutableStateOf<Long?>(null) }
 
     val durationMs = rawDurationMs.coerceAtLeast(1L)
@@ -475,27 +491,135 @@ fun NowPlayingScreen(
                             modifier = Modifier.fillMaxSize()
                         )
                     } else {
-                        Box(
+                        Column(
                             modifier = Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.Center
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
                         ) {
-                            val coverShape = RoundedCornerShape(10.dp)
+                            val coverShape = RoundedCornerShape(12.dp)
+                            val coverScale by animateFloatAsState(
+                                targetValue = if (effectiveIsPlaying || reducedMotion) 1f else 0.93f,
+                                animationSpec = LinerMotion.appleDefaultSpring(),
+                                label = "coverPlayPauseScale"
+                            )
+                            var swipeOffsetX by remember { mutableFloatStateOf(0f) }
+                            val animatedSwipeX by animateFloatAsState(
+                                targetValue = swipeOffsetX,
+                                animationSpec = LinerMotion.appleDefaultSpring(),
+                                label = "coverSwipeX"
+                            )
                             LinerCoverArt(
                                 url = track?.cover?.url ?: track?.cover?.fallbackUrl,
                                 contentDescription = track?.title,
-                                size = 340.dp,
+                                size = 320.dp,
                                 shape = coverShape,
                                 modifier = Modifier
-                                    .fillMaxWidth(0.96f)
+                                    .fillMaxWidth()
                                     .aspectRatio(1f)
+                                    .graphicsLayer {
+                                        scaleX = coverScale
+                                        scaleY = coverScale
+                                        translationX = animatedSwipeX * 0.45f
+                                    }
+                                    .pointerInput(track?.id) {
+                                        detectHorizontalDragGestures(
+                                            onHorizontalDrag = { change, dragAmount ->
+                                                change.consume()
+                                                swipeOffsetX = (swipeOffsetX + dragAmount).coerceIn(-220f, 220f)
+                                            },
+                                            onDragEnd = {
+                                                if (swipeOffsetX <= -90f) {
+                                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                    effectiveNext()
+                                                } else if (swipeOffsetX >= 90f) {
+                                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                    effectivePrevious()
+                                                }
+                                                swipeOffsetX = 0f
+                                            },
+                                            onDragCancel = { swipeOffsetX = 0f }
+                                        )
+                                    }
                                     .shadow(
-                                        elevation = 24.dp,
+                                        elevation = if (effectiveIsPlaying) 28.dp else 14.dp,
                                         shape = coverShape,
                                         clip = false,
                                         ambientColor = Color.Black.copy(alpha = 0.55f),
                                         spotColor = Color.Black.copy(alpha = 0.65f)
                                     )
                             )
+
+                            // Spotify-style left-aligned live lyrics preview under cover art
+                            // with the same scroll-up & color transition as fullscreen lyrics
+                            val syncedLyrics = playbackState.lyrics
+                            if (syncedLyrics != null && syncedLyrics.isSynced && syncedLyrics.lines.isNotEmpty()) {
+                                val activeIndex = syncedLyrics.findActiveLineIndex(displayedPositionMs)
+                                val previewListState = rememberLazyListState()
+
+                                LaunchedEffect(activeIndex) {
+                                    if (activeIndex >= 0) {
+                                        previewListState.animateScrollToItem(activeIndex)
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(14.dp))
+                                LazyColumn(
+                                    state = previewListState,
+                                    userScrollEnabled = false,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(72.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            showLyrics = true
+                                        }
+                                        .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                                        .drawWithContent {
+                                            drawContent()
+                                            drawRect(
+                                                brush = Brush.verticalGradient(
+                                                    0.0f to Color.Transparent,
+                                                    0.10f to Color.Black,
+                                                    0.72f to Color.Black,
+                                                    1.0f to Color.Transparent
+                                                ),
+                                                blendMode = BlendMode.DstIn
+                                            )
+                                        },
+                                    contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    itemsIndexed(
+                                        items = syncedLyrics.lines,
+                                        key = { index, line -> "preview_${index}_${line.startMs}" }
+                                    ) { index, line ->
+                                        val isActive = index == activeIndex
+                                        val lineColor by animateColorAsState(
+                                            targetValue = if (isActive) Color.White else Color.White.copy(alpha = 0.28f),
+                                            animationSpec = tween(durationMillis = if (reducedMotion) 0 else 200),
+                                            label = "previewLyricColor"
+                                        )
+                                        val lineText = if (line.isInstrumental && line.text.isBlank()) {
+                                            "• • •"
+                                        } else {
+                                            line.text
+                                        }
+                                        Text(
+                                            text = lineText,
+                                            style = MaterialTheme.typography.titleMedium.copy(
+                                                fontSize = 16.sp,
+                                                lineHeight = 22.sp,
+                                                fontWeight = if (isActive) FontWeight.Bold else FontWeight.SemiBold
+                                            ),
+                                            color = lineColor,
+                                            textAlign = TextAlign.Start,
+                                            softWrap = true,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -510,22 +634,46 @@ fun NowPlayingScreen(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = track?.title ?: "Nothing playing",
+                        text = track?.title ?: "Ничего не играет",
                         style = MaterialTheme.typography.titleLarge.copy(
-                            fontSize = 22.sp,
+                            fontSize = 21.sp,
+                            lineHeight = 26.sp,
                             fontWeight = FontWeight.Bold
                         ),
                         color = Color.White,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        softWrap = true
                     )
                     Spacer(modifier = Modifier.height(2.dp))
+                    val primaryArtist = track?.artists?.firstOrNull()
+                    val artistDisplayText = track?.artistNames?.ifBlank { "Неизвестный артист" } ?: ""
+                    val artistTargetId = when {
+                        primaryArtist != null && primaryArtist.id.isNotBlank() && primaryArtist.id != "unknown" ->
+                            primaryArtist.id
+                        primaryArtist != null && primaryArtist.name.isNotBlank() ->
+                            "name:${primaryArtist.name}"
+                        artistDisplayText.isNotBlank() && artistDisplayText != "Неизвестный артист" ->
+                            "name:${artistDisplayText.split(",").first().trim()}"
+                        else -> null
+                    }
                     Text(
-                        text = track?.artistNames?.ifBlank { "Unknown Artist" } ?: "",
-                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp),
-                        color = Color.White.copy(alpha = 0.70f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        text = artistDisplayText,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontSize = 15.sp,
+                            lineHeight = 20.sp
+                        ),
+                        color = Color.White.copy(alpha = 0.72f),
+                        softWrap = true,
+                        modifier = if (artistTargetId != null) {
+                            Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    onOpenArtist(artistTargetId)
+                                }
+                                .padding(vertical = 2.dp)
+                        } else {
+                            Modifier
+                        }
                     )
                 }
 
@@ -554,7 +702,7 @@ fun NowPlayingScreen(
                             contentDescription = stringResource(
                                 if (isLiked) R.string.cd_unlike else R.string.cd_like
                             ),
-                            tint = if (isLiked) LinerColors.AccentRed else Color.White.copy(alpha = 0.75f),
+                            tint = if (isLiked) LinerColors.TextPrimary else Color.White.copy(alpha = 0.55f),
                             modifier = Modifier
                                 .size(26.dp)
                                 .graphicsLayer {
@@ -567,14 +715,32 @@ fun NowPlayingScreen(
             }
 
             if (!playbackState.errorMessage.isNullOrBlank()) {
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = playbackState.errorMessage.orEmpty(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color.White.copy(alpha = 0.75f),
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
+                val rawErr = playbackState.errorMessage.orEmpty()
+                val friendlyErr = when {
+                    rawErr.contains("Unable to resolve host", ignoreCase = true) ||
+                        rawErr.contains("No address", ignoreCase = true) ||
+                        rawErr.contains("timed out", ignoreCase = true) ||
+                        rawErr.contains("unreachable", ignoreCase = true) ->
+                        "Нет сети — нажмите ▶ для повтора"
+                    rawErr.contains("HTTP 5", ignoreCase = true) ->
+                        "Сервер временно недоступен — нажмите ▶"
+                    else -> "Ошибка воспроизведения — нажмите ▶"
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Box(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.10f))
+                        .padding(horizontal = 12.dp, vertical = 5.dp)
+                ) {
+                    Text(
+                        text = friendlyErr,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White.copy(alpha = 0.82f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(14.dp))
@@ -616,14 +782,17 @@ fun NowPlayingScreen(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Spotify 5-slot transport controls: Shuffle | Prev | Big Play | Next | Lyrics
+            // Balanced 5-slot monochrome transport controls: Shuffle | Prev | Play 56dp | Next | Lyrics
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(
-                    onClick = onToggleShuffle,
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onToggleShuffle()
+                    },
                     modifier = Modifier.size(44.dp)
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -631,33 +800,36 @@ fun NowPlayingScreen(
                             painter = painterResource(R.drawable.ic_solar_shuffle),
                             contentDescription = stringResource(R.string.cd_shuffle),
                             tint = if (playbackState.shuffleEnabled) {
-                                Color(0xFF1ED760)
+                                LinerColors.TextPrimary
                             } else {
-                                Color.White.copy(alpha = 0.65f)
+                                Color.White.copy(alpha = 0.50f)
                             },
-                            modifier = Modifier.size(22.dp)
+                            modifier = Modifier.size(21.dp)
                         )
                         if (playbackState.shuffleEnabled) {
-                            Spacer(modifier = Modifier.height(2.dp))
+                            Spacer(modifier = Modifier.height(3.dp))
                             Box(
                                 modifier = Modifier
                                     .size(4.dp)
                                     .clip(CircleShape)
-                                    .background(Color(0xFF1ED760))
+                                    .background(LinerColors.TextPrimary)
                             )
                         }
                     }
                 }
 
                 IconButton(
-                    onClick = effectivePrevious,
-                    modifier = Modifier.size(48.dp)
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        effectivePrevious()
+                    },
+                    modifier = Modifier.size(46.dp)
                 ) {
                     Icon(
                         painter = painterResource(R.drawable.ic_solar_skip_prev),
                         contentDescription = stringResource(R.string.cd_previous),
-                        tint = Color.White,
-                        modifier = Modifier.size(32.dp)
+                        tint = LinerColors.TextPrimary,
+                        modifier = Modifier.size(28.dp)
                     )
                 }
 
@@ -674,7 +846,7 @@ fun NowPlayingScreen(
                         contentColor = BackdropBase
                     ),
                     modifier = Modifier
-                        .size(64.dp)
+                        .size(56.dp)
                         .pressScale(playInteraction, targetScale = 0.94f)
                 ) {
                     if (effectiveIsBuffering) {
@@ -691,41 +863,47 @@ fun NowPlayingScreen(
                             contentDescription = stringResource(
                                 if (effectiveIsPlaying) R.string.cd_pause else R.string.cd_play
                             ),
-                            modifier = Modifier.size(28.dp)
+                            modifier = Modifier.size(24.dp)
                         )
                     }
                 }
 
                 IconButton(
-                    onClick = effectiveNext,
-                    modifier = Modifier.size(48.dp)
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        effectiveNext()
+                    },
+                    modifier = Modifier.size(46.dp)
                 ) {
                     Icon(
                         painter = painterResource(R.drawable.ic_solar_skip_next),
                         contentDescription = stringResource(R.string.cd_next),
-                        tint = Color.White,
-                        modifier = Modifier.size(32.dp)
+                        tint = LinerColors.TextPrimary,
+                        modifier = Modifier.size(28.dp)
                     )
                 }
 
                 IconButton(
-                    onClick = { showLyrics = !showLyrics },
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        showLyrics = !showLyrics
+                    },
                     modifier = Modifier.size(44.dp)
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(
                             imageVector = Icons.Rounded.Lyrics,
                             contentDescription = stringResource(R.string.cd_lyrics),
-                            tint = if (showLyrics) Color(0xFF1ED760) else Color.White.copy(alpha = 0.65f),
-                            modifier = Modifier.size(22.dp)
+                            tint = if (showLyrics) LinerColors.TextPrimary else Color.White.copy(alpha = 0.50f),
+                            modifier = Modifier.size(21.dp)
                         )
                         if (showLyrics) {
-                            Spacer(modifier = Modifier.height(2.dp))
+                            Spacer(modifier = Modifier.height(3.dp))
                             Box(
                                 modifier = Modifier
                                     .size(4.dp)
                                     .clip(CircleShape)
-                                    .background(Color(0xFF1ED760))
+                                    .background(LinerColors.TextPrimary)
                             )
                         }
                     }
@@ -733,7 +911,7 @@ fun NowPlayingScreen(
             }
 
             if (isRemoteMode && lanConnectManager != null && remoteState != null) {
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(10.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -742,121 +920,183 @@ fun NowPlayingScreen(
                     Icon(
                         imageVector = Icons.Rounded.VolumeUp,
                         contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.72f),
-                        modifier = Modifier.size(18.dp)
+                        tint = Color.White.copy(alpha = 0.60f),
+                        modifier = Modifier.size(17.dp)
                     )
-                    Slider(
-                        value = remoteState.volume.coerceIn(0f, 1f),
-                        onValueChange = { v -> lanConnectManager.setRemoteVolume(v) },
-                        colors = SliderDefaults.colors(
-                            thumbColor = Color.White,
-                            activeTrackColor = Color.White,
-                            inactiveTrackColor = Color.White.copy(alpha = 0.22f)
-                        ),
-                        modifier = Modifier.weight(1f).height(24.dp)
+                    MinimalScrubber(
+                        progress = remoteState.volume.coerceIn(0f, 1f),
+                        durationMs = 1000L,
+                        onScrub = { v -> lanConnectManager.setRemoteVolume(v / 1000f) },
+                        onScrubEnd = { v -> lanConnectManager.setRemoteVolume(v / 1000f) },
+                        onScrubCancel = {},
+                        modifier = Modifier.weight(1f)
                     )
                 }
             }
 
-            if (!showLyrics) {
-                Spacer(modifier = Modifier.height(14.dp))
-                val previewCardBg = lerp(Color(0xFF1E1E24), topColor, 0.72f)
-                val lyr = playbackState.lyrics
-                val activeIdx = remember(lyr, displayedPositionMs) {
-                    if (lyr != null && lyr.lines.isNotEmpty()) {
-                        lyr.findActiveLineIndex(displayedPositionMs).coerceAtLeast(0)
-                    } else {
-                        -1
-                    }
-                }
-                val loadingText = stringResource(R.string.lyrics_loading)
-                val tapText = stringResource(R.string.lyrics_preview_tap)
-                val previewPair: Pair<String, String?> = remember(lyr, activeIdx, playbackState.isLyricsLoading, loadingText, tapText) {
-                    when {
-                        lyr != null && lyr.lines.isNotEmpty() && activeIdx >= 0 -> {
-                            val current = lyr.lines.getOrNull(activeIdx)?.text.orEmpty()
-                            val next = lyr.lines.getOrNull(activeIdx + 1)?.text
-                            current to next
-                        }
-                        !lyr?.plainText.isNullOrBlank() -> {
-                            val plain = lyr?.plainText?.lines()?.filter { it.isNotBlank() }.orEmpty()
-                            (plain.firstOrNull() ?: "") to plain.getOrNull(1)
-                        }
-                        playbackState.isLyricsLoading -> loadingText to null
-                        else -> tapText to null
-                    }
-                }
-                val desktopEase = LinerMotion.EaseOut
-                Surface(
-                    onClick = { showLyrics = true },
-                    shape = RoundedCornerShape(14.dp),
-                    color = previewCardBg,
-                    modifier = Modifier.fillMaxWidth()
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Secondary bottom actions: Repeat | Queue | Track Menu
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onCycleRepeat()
+                    },
+                    modifier = Modifier.size(42.dp)
                 ) {
-                    Column(
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
-                    ) {
-                        Text(
-                            text = stringResource(R.string.lyrics_preview_title),
-                            style = MaterialTheme.typography.labelLarge.copy(
-                                fontWeight = FontWeight.Bold
-                            ),
-                            color = Color.White.copy(alpha = 0.85f)
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        AnimatedContent(
-                            targetState = Triple(activeIdx, previewPair.first, previewPair.second),
-                            transitionSpec = {
-                                val enter = slideInVertically(
-                                    animationSpec = tween(durationMillis = 360, easing = desktopEase),
-                                    initialOffsetY = { fullHeight -> (fullHeight * 0.45f).toInt() }
-                                ) + fadeIn(
-                                    animationSpec = tween(durationMillis = 320, easing = desktopEase)
-                                )
-                                val exit = slideOutVertically(
-                                    animationSpec = tween(durationMillis = 260, easing = desktopEase),
-                                    targetOffsetY = { fullHeight -> -(fullHeight * 0.45f).toInt() }
-                                ) + fadeOut(
-                                    animationSpec = tween(durationMillis = 220, easing = desktopEase)
-                                )
-                                enter togetherWith exit
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            imageVector = if (playbackState.repeatMode == RepeatMode.ONE) {
+                                Icons.Rounded.RepeatOne
+                            } else {
+                                Icons.Rounded.Repeat
                             },
-                            label = "lyrics_preview_slide"
-                        ) { (_, currentLine, nextLine) ->
-                            Column(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalArrangement = Arrangement.spacedBy(3.dp)
-                            ) {
-                                Text(
-                                    text = currentLine,
-                                    style = MaterialTheme.typography.titleMedium.copy(
-                                        fontSize = 16.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        lineHeight = 21.sp
-                                    ),
-                                    color = Color.White,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                if (!nextLine.isNullOrBlank()) {
-                                    Text(
-                                        text = nextLine,
-                                        style = MaterialTheme.typography.bodyMedium.copy(
-                                            fontSize = 14.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            lineHeight = 19.sp
-                                        ),
-                                        color = Color.White.copy(alpha = 0.55f),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                            contentDescription = "Повтор",
+                            tint = if (playbackState.repeatMode != RepeatMode.OFF) {
+                                LinerColors.TextPrimary
+                            } else {
+                                Color.White.copy(alpha = 0.46f)
+                            },
+                            modifier = Modifier.size(20.dp)
+                        )
+                        if (playbackState.repeatMode != RepeatMode.OFF) {
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Box(
+                                modifier = Modifier
+                                    .size(3.5.dp)
+                                    .clip(CircleShape)
+                                    .background(LinerColors.TextPrimary)
+                            )
+                        }
+                    }
+                }
+
+                IconButton(
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        showQueueSheet = true
+                    },
+                    modifier = Modifier.size(42.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.QueueMusic,
+                        contentDescription = "Очередь",
+                        tint = Color.White.copy(alpha = 0.70f),
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+
+                IconButton(
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        track?.let(onOpenTrackMenu)
+                    },
+                    enabled = track != null,
+                    modifier = Modifier.size(42.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.MoreHoriz,
+                        contentDescription = "Действия",
+                        tint = Color.White.copy(alpha = 0.70f),
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+        }
+
+        if (showQueueSheet) {
+            val queueSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+            ModalBottomSheet(
+                onDismissRequest = { showQueueSheet = false },
+                sheetState = queueSheetState,
+                containerColor = Color(0xFF13161D),
+                contentColor = Color.White,
+                dragHandle = {
+                    Box(
+                        modifier = Modifier
+                            .padding(top = 10.dp, bottom = 6.dp)
+                            .size(width = 36.dp, height = 4.dp)
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(Color.White.copy(alpha = 0.22f))
+                    )
+                }
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(bottom = 16.dp)
+                ) {
+                    Text(
+                        text = "Очередь (${playbackState.queue.size})",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = LinerColors.TextPrimary,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
+                    )
+                    if (playbackState.queue.isEmpty()) {
+                        Text(
+                            text = "Очередь пуста",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = LinerColors.TextTertiary,
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)
+                        )
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(380.dp)
+                        ) {
+                            itemsIndexed(playbackState.queue) { idx, qTrack ->
+                                val isCurrent = idx == playbackState.currentIndex
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(if (isCurrent) Color.White.copy(alpha = 0.08f) else Color.Transparent)
+                                        .clickable {
+                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            onPlayQueueIndex(idx)
+                                            showQueueSheet = false
+                                        }
+                                        .padding(horizontal = 20.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    LinerCoverArt(
+                                        url = qTrack.cover?.url ?: qTrack.cover?.fallbackUrl,
+                                        contentDescription = qTrack.title,
+                                        size = 42.dp,
+                                        shape = RoundedCornerShape(8.dp)
                                     )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = qTrack.title,
+                                            style = MaterialTheme.typography.bodyMedium.copy(
+                                                fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal
+                                            ),
+                                            color = LinerColors.TextPrimary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = qTrack.artistNames.ifBlank { "Неизвестный артист" },
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = LinerColors.TextSecondary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            } else {
-                Spacer(modifier = Modifier.height(10.dp))
             }
         }
     }
@@ -868,22 +1108,18 @@ private fun MinimalScrubber(
     durationMs: Long,
     onScrub: (Long) -> Unit,
     onScrubEnd: (Long) -> Unit,
-    onScrubCancel: () -> Unit
+    onScrubCancel: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val pillShape = RoundedCornerShape(999.dp)
     var isDragging by remember { mutableStateOf(false) }
     val trackHeightDp by animateDpAsState(
-        targetValue = if (isDragging) 5.dp else 3.dp,
+        targetValue = if (isDragging) 6.dp else 4.dp,
         animationSpec = LinerMotion.easeOutTween(120),
         label = "scrubberTrackHeight"
     )
-    val thumbRadiusDp by animateDpAsState(
-        targetValue = if (isDragging) 8.dp else 5.5.dp,
-        animationSpec = LinerMotion.easeOutTween(120),
-        label = "scrubberThumbRadius"
-    )
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .height(26.dp)
             .pointerInput(durationMs) {
@@ -919,36 +1155,19 @@ private fun MinimalScrubber(
             },
         contentAlignment = Alignment.Center
     ) {
-        Canvas(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(18.dp)
+                .height(trackHeightDp)
+                .clip(pillShape)
+                .background(Color.White.copy(alpha = 0.18f))
         ) {
-            val fraction = progress.coerceIn(0f, 1f)
-            val centerY = size.height / 2f
-            val trackHeight = trackHeightDp.toPx()
-            val thumbRadius = thumbRadiusDp.toPx()
-            val usableWidth = (size.width - thumbRadius * 2).coerceAtLeast(1f)
-            val thumbX = thumbRadius + usableWidth * fraction
-
-            drawLine(
-                color = Color.White.copy(alpha = 0.22f),
-                start = androidx.compose.ui.geometry.Offset(thumbRadius, centerY),
-                end = androidx.compose.ui.geometry.Offset(size.width - thumbRadius, centerY),
-                strokeWidth = trackHeight,
-                cap = androidx.compose.ui.graphics.StrokeCap.Round
-            )
-            drawLine(
-                color = Color.White,
-                start = androidx.compose.ui.geometry.Offset(thumbRadius, centerY),
-                end = androidx.compose.ui.geometry.Offset(thumbX, centerY),
-                strokeWidth = trackHeight,
-                cap = androidx.compose.ui.graphics.StrokeCap.Round
-            )
-            drawCircle(
-                color = Color.White,
-                radius = thumbRadius,
-                center = androidx.compose.ui.geometry.Offset(thumbX, centerY)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(progress.coerceIn(0f, 1f))
+                    .height(trackHeightDp)
+                    .clip(pillShape)
+                    .background(Color.White)
             )
         }
     }
@@ -986,7 +1205,7 @@ private fun NowPlayingLyricsView(
         lyrics == null -> {
             Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    text = "No lyrics available",
+                    text = "Текст песни недоступен",
                     style = MaterialTheme.typography.titleMedium,
                     color = Color.White.copy(alpha = 0.45f)
                 )
@@ -995,7 +1214,7 @@ private fun NowPlayingLyricsView(
         lyrics.isInstrumental -> {
             Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    text = "Instrumental",
+                    text = "Инструментал",
                     style = MaterialTheme.typography.headlineMedium,
                     color = Color.White.copy(alpha = 0.72f)
                 )
@@ -1051,7 +1270,7 @@ private fun NowPlayingLyricsView(
         else -> {
             Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    text = "No lyrics available",
+                    text = "Текст песни недоступен",
                     style = MaterialTheme.typography.titleMedium,
                     color = Color.White.copy(alpha = 0.45f),
                     textAlign = TextAlign.Center

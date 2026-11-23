@@ -73,7 +73,18 @@ class LibraryViewModel(
             runCatching {
                 withContext(Dispatchers.IO) {
                     val playlistsDeferred = async { container.apiClient.listPlaylists() }
-                    val likedDeferred = async { container.apiClient.listLikedTracks(limit = 100) }
+                    val likedDeferred = async {
+                        val allLiked = mutableListOf<Track>()
+                        var cursor: String? = null
+                        var pages = 0
+                        do {
+                            val page = container.apiClient.listLikedTracks(limit = 100, cursor = cursor)
+                            allLiked.addAll(page.items.map { it.track })
+                            cursor = page.nextCursor
+                            pages += 1
+                        } while (!cursor.isNullOrBlank() && pages < 20)
+                        allLiked.distinctBy { it.id }
+                    }
                     val historyDeferred = async {
                         runCatching { container.apiClient.getHistory(limit = 25) }.getOrNull()
                     }
@@ -83,8 +94,7 @@ class LibraryViewModel(
                         historyDeferred.await()
                     )
                 }
-            }.onSuccess { (playlists, likedPage, historyPage) ->
-                val likedTracks = likedPage.items.map { it.track }
+            }.onSuccess { (playlists, likedTracks, historyPage) ->
                 val recentTracks = historyPage?.items
                     .orEmpty()
                     .map { it.track }
@@ -96,7 +106,7 @@ class LibraryViewModel(
                     it.copy(
                         playlists = playlists,
                         likedTracks = likedTracks,
-                        likedTracksCount = likedPage.items.size,
+                        likedTracksCount = likedTracks.size,
                         recentTracks = recentTracks,
                         isLoading = false,
                         errorMessage = null
