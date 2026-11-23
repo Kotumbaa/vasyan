@@ -1,8 +1,14 @@
 package `fun`.tryliner.android.ui.components
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -48,6 +54,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import `fun`.tryliner.android.playback.TrackDownloadManager
 import `fun`.tryliner.android.playback.TrackDownloadState
+import `fun`.tryliner.android.ui.theme.rememberReducedMotion
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -75,9 +84,15 @@ fun TrackRow(
 ) {
     val haptics = LocalHapticFeedback.current
     val openTrackMenu = LocalTrackMenuOpener.current
+    val reducedMotion = rememberReducedMotion()
+    val fastDuration = if (reducedMotion) 0 else LinerMotion.DURATION_FAST
     val rowShape = RoundedCornerShape(10.dp)
     val coverShape = LinerShapes.Tile
-    val rowBg = if (isPlayingCurrent) LinerColors.Fill else Color.Transparent
+    val rowBg by animateColorAsState(
+        targetValue = if (isPlayingCurrent) LinerColors.Fill else Color.Transparent,
+        animationSpec = LinerMotion.easeOutTween(fastDuration),
+        label = "trackRowBg"
+    )
     val rowModifier = modifier
         .fillMaxWidth()
         .clip(rowShape)
@@ -107,7 +122,11 @@ fun TrackRow(
                 size = 44.dp,
                 shape = coverShape
             )
-            if (isPlayingCurrent) {
+            androidx.compose.animation.AnimatedVisibility(
+                visible = isPlayingCurrent,
+                enter = fadeIn(LinerMotion.easeOutTween(fastDuration)),
+                exit = fadeOut(LinerMotion.easeOutTween(fastDuration))
+            ) {
                 Box(
                     modifier = Modifier
                         .size(44.dp)
@@ -181,14 +200,21 @@ fun TrackRow(
 
         DownloadButton(track = track, buttonSize = 32.dp, iconSize = 17.dp)
 
-        val heartScale = remember { Animatable(1f) }
-        LaunchedEffect(isLiked) {
-            if (isLiked) {
+        val heartScale = remember(track.id) { Animatable(1f) }
+        var previousLiked by remember(track.id) { mutableStateOf(isLiked) }
+        val heartTint by animateColorAsState(
+            targetValue = if (isLiked) LinerColors.TextPrimary else Color.White.copy(alpha = 0.36f),
+            animationSpec = LinerMotion.easeOutTween(fastDuration),
+            label = "trackHeartTint"
+        )
+        LaunchedEffect(track.id, isLiked, reducedMotion) {
+            if (isLiked && !previousLiked && !reducedMotion) {
                 heartScale.animateTo(1.22f, tween(90, easing = LinerMotion.EaseOut))
                 heartScale.animateTo(1f, LinerMotion.bounceSpring())
-            } else {
+            } else if (!isLiked || reducedMotion) {
                 heartScale.snapTo(1f)
             }
+            previousLiked = isLiked
         }
         IconButton(
             onClick = {
@@ -202,7 +228,7 @@ fun TrackRow(
                     if (isLiked) R.drawable.ic_mgc_heart_fill else R.drawable.ic_mgc_heart_line
                 ),
                 contentDescription = stringResource(if (isLiked) R.string.cd_unlike else R.string.cd_like),
-                tint = if (isLiked) LinerColors.TextPrimary else Color.White.copy(alpha = 0.36f),
+                tint = heartTint,
                 modifier = Modifier
                     .size(18.dp)
                     .graphicsLayer {
@@ -242,8 +268,12 @@ fun DownloadButton(
     buttonSize: Dp = 36.dp,
 ) {
     val manager = LocalTrackDownloads.current ?: return
-    val states by manager.states.collectAsStateWithLifecycle()
-    val state = states[track.id]
+    val reducedMotion = rememberReducedMotion()
+    val fastDuration = if (reducedMotion) 0 else LinerMotion.DURATION_FAST
+    val stateFlow = remember(manager, track.id) {
+        manager.states.map { it[track.id] }.distinctUntilChanged()
+    }
+    val state = stateFlow.collectAsStateWithLifecycle(initialValue = manager.states.value[track.id]).value
     var confirmDelete by remember { mutableStateOf(false) }
 
     IconButton(
@@ -256,55 +286,71 @@ fun DownloadButton(
         },
         modifier = modifier.size(buttonSize)
     ) {
-        when (state) {
-            is TrackDownloadState.Downloading -> {
-                val smoothProgress by animateFloatAsState(
-                    targetValue = state.progress,
-                    animationSpec = LinerMotion.easeOutTween(180),
-                    label = "trackDownloadProgress"
-                )
-                Box(contentAlignment = Alignment.Center) {
-                    if (state.progress <= 0f) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(iconSize),
-                            strokeWidth = 2.dp,
-                            color = Color.White.copy(alpha = 0.85f)
-                        )
-                    } else {
-                        CircularProgressIndicator(
-                            progress = { smoothProgress },
-                            modifier = Modifier.size(iconSize),
-                            strokeWidth = 2.dp,
-                            color = Color.White.copy(alpha = 0.85f),
-                            trackColor = Color.White.copy(alpha = 0.15f)
+        val stateKey = when (state) {
+            is TrackDownloadState.Downloading -> 1
+            TrackDownloadState.Downloaded -> 2
+            is TrackDownloadState.Failed -> 3
+            null -> 0
+        }
+        AnimatedContent(
+            targetState = stateKey,
+            transitionSpec = {
+                fadeIn(LinerMotion.easeOutTween(fastDuration)) togetherWith
+                    fadeOut(LinerMotion.easeOutTween(fastDuration))
+            },
+            label = "downloadBtnState"
+        ) { key ->
+            when (key) {
+                1 -> {
+                    val progressTarget = (state as? TrackDownloadState.Downloading)?.progress ?: 0f
+                    val smoothProgress by animateFloatAsState(
+                        targetValue = progressTarget,
+                        animationSpec = LinerMotion.easeOutTween(if (reducedMotion) 0 else 180),
+                        label = "trackDownloadProgress"
+                    )
+                    Box(contentAlignment = Alignment.Center) {
+                        if (progressTarget <= 0f) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(iconSize),
+                                strokeWidth = 2.dp,
+                                color = Color.White.copy(alpha = 0.85f)
+                            )
+                        } else {
+                            CircularProgressIndicator(
+                                progress = { smoothProgress },
+                                modifier = Modifier.size(iconSize),
+                                strokeWidth = 2.dp,
+                                color = Color.White.copy(alpha = 0.85f),
+                                trackColor = Color.White.copy(alpha = 0.15f)
+                            )
+                        }
+                        Icon(
+                            painter = painterResource(R.drawable.ic_mgc_close_line),
+                            contentDescription = "Отменить загрузку",
+                            tint = Color.White.copy(alpha = 0.7f),
+                            modifier = Modifier.size(iconSize * 0.5f)
                         )
                     }
-                    Icon(
-                        painter = painterResource(R.drawable.ic_mgc_close_line),
-                        contentDescription = "Отменить загрузку",
-                        tint = Color.White.copy(alpha = 0.7f),
-                        modifier = Modifier.size(iconSize * 0.5f)
-                    )
                 }
+                2 -> Icon(
+                    painter = painterResource(R.drawable.ic_mgc_check_line),
+                    contentDescription = "Скачано",
+                    tint = LinerColors.AccentPrimary,
+                    modifier = Modifier.size(iconSize)
+                )
+                3 -> Icon(
+                    painter = painterResource(R.drawable.ic_mgc_warning_line),
+                    contentDescription = "Ошибка загрузки, повторить",
+                    tint = LinerColors.AccentRed,
+                    modifier = Modifier.size(iconSize)
+                )
+                else -> Icon(
+                    painter = painterResource(R.drawable.ic_mgc_download_line),
+                    contentDescription = "Скачать",
+                    tint = LinerColors.TextTertiary,
+                    modifier = Modifier.size(iconSize)
+                )
             }
-            TrackDownloadState.Downloaded -> Icon(
-                painter = painterResource(R.drawable.ic_mgc_check_line),
-                contentDescription = "Скачано",
-                tint = LinerColors.AccentPrimary,
-                modifier = Modifier.size(iconSize)
-            )
-            is TrackDownloadState.Failed -> Icon(
-                painter = painterResource(R.drawable.ic_mgc_warning_line),
-                contentDescription = "Ошибка загрузки, повторить",
-                tint = LinerColors.AccentRed,
-                modifier = Modifier.size(iconSize)
-            )
-            null -> Icon(
-                painter = painterResource(R.drawable.ic_mgc_download_line),
-                contentDescription = "Скачать",
-                tint = LinerColors.TextTertiary,
-                modifier = Modifier.size(iconSize)
-            )
         }
     }
 

@@ -6,8 +6,10 @@ import androidx.lifecycle.viewModelScope
 import `fun`.tryliner.android.AppContainer
 import `fun`.tryliner.android.core.model.DailyMixItem
 import `fun`.tryliner.android.core.model.Track
+import `fun`.tryliner.android.core.model.WaveVibe
 import `fun`.tryliner.android.playback.PlaybackUiState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -41,14 +43,17 @@ class HomeViewModel(
     val likedTrackIds: StateFlow<Set<String>> = container.likedTrackIds
     val playbackState: StateFlow<PlaybackUiState> = container.playerController.state
 
+    private var refreshJob: Job? = null
+
     init {
         refresh()
     }
 
     fun refresh() {
+        refreshJob?.cancel()
         _state.update { it.copy(isLoading = true, errorMessage = null) }
 
-        viewModelScope.launch {
+        refreshJob = viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
                 val mixesDeferred = async { runCatching { container.apiClient.getDailyMixes() } }
                 val popular7dDeferred = async {
@@ -124,7 +129,7 @@ class HomeViewModel(
                     mostPlayedTracks = mostPlayedTracks,
                     isLoading = false,
                     errorMessage = if (allFailed) {
-                        firstError?.message ?: "Failed to load home feed"
+                        firstError?.message ?: "Не удалось загрузить ленту"
                     } else {
                         null
                     }
@@ -158,6 +163,19 @@ class HomeViewModel(
         if (mix.tracks.isNotEmpty()) {
             container.playerController.playQueue(mix.tracks, startIndex = 0, shuffle = false)
         }
+    }
+
+    fun startOrToggleMyWave(vibe: WaveVibe) {
+        val current = container.playerController.state.value
+        if (current.isWaveActive && current.waveVibe == vibe.id) {
+            container.playerController.togglePlayPause()
+        } else {
+            container.playerController.startMyWave(vibe.id)
+        }
+    }
+
+    fun selectWaveVibe(vibe: WaveVibe) {
+        container.playerController.setWaveVibe(vibe.id)
     }
 
     fun toggleLike(track: Track) {

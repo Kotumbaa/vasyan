@@ -1,5 +1,8 @@
 package `fun`.tryliner.android.ui.theme
 
+import android.database.ContentObserver
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.Spring
@@ -11,19 +14,27 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.interaction.InteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import kotlin.math.abs
 
+val LocalReducedMotion = staticCompositionLocalOf<Boolean?> { null }
+
 object LinerMotion {
     /** Desktop DESIGN.md default curve: [0.22, 1, 0.36, 1] */
     val EaseOut = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
 
+    const val DURATION_PRESS = 110
     const val DURATION_FAST = 140
+    const val DURATION_LYRICS = 200
     const val DURATION_NORMAL = 220
     const val DURATION_SHEET = 300
     const val DURATION_AMBIENT = 550
@@ -64,16 +75,37 @@ object LinerMotion {
 
 @Composable
 fun rememberReducedMotion(): Boolean {
+    LocalReducedMotion.current?.let { return it }
     val context = LocalContext.current
-    return remember(context) {
+    fun readScaleDisabled(): Boolean = runCatching {
+        Settings.Global.getFloat(
+            context.contentResolver,
+            Settings.Global.ANIMATOR_DURATION_SCALE,
+            1f
+        ) == 0f
+    }.getOrDefault(false)
+
+    var reduced by remember(context) { mutableStateOf(readScaleDisabled()) }
+    DisposableEffect(context) {
+        val uri = runCatching {
+            Settings.Global.getUriFor(Settings.Global.ANIMATOR_DURATION_SCALE)
+        }.getOrNull()
+        if (uri == null) return@DisposableEffect onDispose {}
+        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                reduced = readScaleDisabled()
+            }
+        }
         runCatching {
-            Settings.Global.getFloat(
-                context.contentResolver,
-                Settings.Global.ANIMATOR_DURATION_SCALE,
-                1f
-            ) == 0f
-        }.getOrDefault(false)
+            context.contentResolver.registerContentObserver(uri, false, observer)
+        }
+        onDispose {
+            runCatching {
+                context.contentResolver.unregisterContentObserver(observer)
+            }
+        }
     }
+    return reduced
 }
 
 fun Modifier.pressScale(

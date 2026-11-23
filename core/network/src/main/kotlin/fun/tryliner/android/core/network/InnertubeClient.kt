@@ -8,6 +8,8 @@ import `fun`.tryliner.android.core.model.TrackAlbum
 import `fun`.tryliner.android.core.model.TrackArtist
 import `fun`.tryliner.android.core.model.TrackDetails
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -73,6 +75,8 @@ class InnertubeClient(
 
     @Volatile
     private var visitorDataExpiresAtMs: Long = 0L
+
+    private val visitorDataMutex = Mutex()
 
     companion object {
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
@@ -253,8 +257,6 @@ class InnertubeClient(
         val videoId = toVideoId(trackId)
             ?: throw InnertubeException("Track $trackId is not a YouTube video.", 400)
 
-        ensureVisitorData(forceRefresh = false)
-
         val failures = mutableListOf<String>()
         var lastRefusedAll = false
 
@@ -302,36 +304,42 @@ class InnertubeClient(
         if (!forceRefresh && !visitorData.isNullOrBlank() && visitorDataExpiresAtMs > now) {
             return
         }
-        if (forceRefresh) {
-            visitorData = null
-            visitorDataExpiresAtMs = 0L
-        }
-        try {
-            val req = Request.Builder()
-                .url("https://www.youtube.com/sw.js_data")
-                .header(
-                    "User-Agent",
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-                )
-                .get()
-                .build()
-            val quickClient = httpClient.newBuilder()
-                .connectTimeout(3, TimeUnit.SECONDS)
-                .readTimeout(3, TimeUnit.SECONDS)
-                .build()
-            quickClient.newCall(req).await().use { res ->
-                if (!res.isSuccessful) return
-                val text = res.body?.string().orEmpty()
-                val parsed = VISITOR_DATA_REGEX.find(text)?.value
-                if (!parsed.isNullOrBlank()) {
-                    visitorData = parsed
-                    visitorDataExpiresAtMs = System.currentTimeMillis() + VISITOR_SESSION_TTL_MS
-                }
+        visitorDataMutex.withLock {
+            val lockedNow = System.currentTimeMillis()
+            if (!forceRefresh && !visitorData.isNullOrBlank() && visitorDataExpiresAtMs > lockedNow) {
+                return
             }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            // visitorData is optional; do not block playback if YouTube is unreachable.
+            if (forceRefresh) {
+                visitorData = null
+                visitorDataExpiresAtMs = 0L
+            }
+            try {
+                val req = Request.Builder()
+                    .url("https://www.youtube.com/sw.js_data")
+                    .header(
+                        "User-Agent",
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                    )
+                    .get()
+                    .build()
+                val quickClient = httpClient.newBuilder()
+                    .connectTimeout(3, TimeUnit.SECONDS)
+                    .readTimeout(3, TimeUnit.SECONDS)
+                    .build()
+                quickClient.newCall(req).await().use { res ->
+                    if (!res.isSuccessful) return
+                    val text = res.body?.string().orEmpty()
+                    val parsed = VISITOR_DATA_REGEX.find(text)?.value
+                    if (!parsed.isNullOrBlank()) {
+                        visitorData = parsed
+                        visitorDataExpiresAtMs = System.currentTimeMillis() + VISITOR_SESSION_TTL_MS
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // visitorData is optional; do not block playback if YouTube is unreachable.
+            }
         }
     }
 

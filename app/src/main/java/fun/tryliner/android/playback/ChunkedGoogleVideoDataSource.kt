@@ -7,15 +7,18 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.BaseDataSource
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
+import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import java.io.IOException
 import java.io.InputStream
+import java.io.InterruptedIOException
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.min
 
 /**
@@ -51,6 +54,10 @@ class ChunkedGoogleVideoDataSource(
             )
         }
 
+        fun release() {
+            prefetchExecutor.shutdownNow()
+        }
+
         companion object {
             private const val DEFAULT_USER_AGENT =
                 "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip"
@@ -70,7 +77,9 @@ class ChunkedGoogleVideoDataSource(
     private var currentUri: Uri? = null
     private var currentPosition = 0L
     private var bytesRemaining = C.LENGTH_UNSET.toLong()
+    @Volatile
     private var knownTotalLength: Long? = null
+    @Volatile
     private var requestEndExclusive: Long? = null
 
     private var chunkBytes = ByteArray(0)
@@ -79,8 +88,14 @@ class ChunkedGoogleVideoDataSource(
 
     private data class PrefetchEntry(
         val plannedSize: Long,
+        val activeCall: AtomicReference<Call?>,
         val future: CompletableFuture<ChunkResult>,
-    )
+    ) {
+        fun cancel() {
+            activeCall.getAndSet(null)?.cancel()
+            future.cancel(true)
+        }
+    }
 
     private val prefetchedChunks = LinkedHashMap<Long, PrefetchEntry>()
 
@@ -210,6 +225,10 @@ class ChunkedGoogleVideoDataSource(
         if (entry != null) {
             return try {
                 entry.future.get()
+            } catch (e: InterruptedException) {
+                entry.cancel()
+                Thread.currentThread().interrupt()
+                throw InterruptedIOException("Interrupted while waiting for prefetched chunk").initCause(e) as IOException
             } catch (_: Exception) {
                 fetchChunk(start, adaptiveChunkSize(leadBytes = 0L))
             }
@@ -228,7 +247,7 @@ class ChunkedGoogleVideoDataSource(
         while (iter.hasNext()) {
             val entry = iter.next()
             if (entry.key < firstNextStart) {
-                entry.value.future.cancel(true)
+                entry.value.cancel()
                 iter.remove()
             }
         }
@@ -256,36 +275,44 @@ class ChunkedGoogleVideoDataSource(
             if (actualSize <= 0L) break
 
             val startForTask = candidateStart
+            val callRef = AtomicReference<Call?>(null)
             val future = CompletableFuture.supplyAsync(
-                { fetchChunkForUri(uri, startForTask, actualSize) },
+                { fetchChunkForUri(uri, startForTask, actualSize, total, reqEnd, callRef) },
                 prefetchExecutor,
             )
-            prefetchedChunks[startForTask] = PrefetchEntry(actualSize, future)
+            prefetchedChunks[startForTask] = PrefetchEntry(actualSize, callRef, future)
             candidateStart += actualSize
         }
     }
 
     private fun cancelAllPrefetches() {
         for (entry in prefetchedChunks.values) {
-            entry.future.cancel(true)
+            entry.cancel()
         }
         prefetchedChunks.clear()
     }
 
     private fun fetchChunk(start: Long, chunkSize: Long): ChunkResult {
         val uri = currentUri ?: throw IOException("URI is null")
-        return fetchChunkForUri(uri, start, chunkSize)
+        return fetchChunkForUri(uri, start, chunkSize, knownTotalLength, requestEndExclusive, callRef = null)
     }
 
-    private fun fetchChunkForUri(uri: Uri, start: Long, chunkSize: Long): ChunkResult {
-        val maxEndByTotal = knownTotalLength?.let { it - 1 }
-        val maxEndByRequest = requestEndExclusive?.let { it - 1 }
+    private fun fetchChunkForUri(
+        uri: Uri,
+        start: Long,
+        chunkSize: Long,
+        totalLengthSnapshot: Long?,
+        reqEndSnapshot: Long?,
+        callRef: AtomicReference<Call?>?,
+    ): ChunkResult {
+        val maxEndByTotal = totalLengthSnapshot?.let { it - 1 }
+        val maxEndByRequest = reqEndSnapshot?.let { it - 1 }
         var end = start + chunkSize - 1
         if (maxEndByTotal != null) end = min(end, maxEndByTotal)
         if (maxEndByRequest != null) end = min(end, maxEndByRequest)
 
         if (end < start) {
-            return ChunkResult(ByteArray(0), knownTotalLength)
+            return ChunkResult(ByteArray(0), totalLengthSnapshot)
         }
 
         val rangedUri = withRangeParam(uri, start, end)
@@ -294,13 +321,19 @@ class ChunkedGoogleVideoDataSource(
             .get()
             .build()
 
-        okHttpClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful && response.code != 206) {
-                throw IOException("GoogleVideo chunk $start-$end returned HTTP ${response.code}")
+        val call = okHttpClient.newCall(request)
+        callRef?.set(call)
+        try {
+            call.execute().use { response ->
+                if (!response.isSuccessful && response.code != 206) {
+                    throw IOException("GoogleVideo chunk $start-$end returned HTTP ${response.code}")
+                }
+                val totalFromHeader = parseTotalFromContentRange(response.header("Content-Range"))
+                val bodyBytes = response.body?.bytes() ?: ByteArray(0)
+                return ChunkResult(bodyBytes, totalFromHeader)
             }
-            val totalFromHeader = parseTotalFromContentRange(response.header("Content-Range"))
-            val bodyBytes = response.body?.bytes() ?: ByteArray(0)
-            return ChunkResult(bodyBytes, totalFromHeader)
+        } finally {
+            callRef?.compareAndSet(call, null)
         }
     }
 
@@ -309,8 +342,9 @@ class ChunkedGoogleVideoDataSource(
         private val CONTENT_RANGE_TOTAL_REGEX = Regex("""/\s*(\d+)$""")
 
         private fun adaptiveChunkSize(leadBytes: Long): Long = when {
-            leadBytes < 256L * 1024L -> 128L * 1024L         // 128 KB: fast start / seek
-            leadBytes < 1024L * 1024L -> 256L * 1024L        // 256 KB: warming up buffer
+            leadBytes < 128L * 1024L -> 64L * 1024L          // 64 KB: instant start / seek
+            leadBytes < 512L * 1024L -> 128L * 1024L         // 128 KB: early buffer
+            leadBytes < 1536L * 1024L -> 256L * 1024L        // 256 KB: warming up buffer
             leadBytes < 3L * 1024L * 1024L -> 512L * 1024L   // 512 KB: steady playback
             leadBytes < 7L * 1024L * 1024L -> 1024L * 1024L  // 1 MB: large lead, fewer requests
             else -> 2048L * 1024L                            // 2 MB: deep buffer, minimal requests

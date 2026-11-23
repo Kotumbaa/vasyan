@@ -1,6 +1,10 @@
 package `fun`.tryliner.android.ui.home
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.foundation.clickable
@@ -27,6 +31,8 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -37,6 +43,7 @@ import dev.chrisbanes.haze.hazeEffect
 import dev.chrisbanes.haze.hazeSource
 import `fun`.tryliner.android.ui.components.LocalAppHazeState
 import `fun`.tryliner.android.ui.components.TrackListSkeleton
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
@@ -44,7 +51,10 @@ import androidx.compose.material.icons.rounded.EmojiEvents
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.LocalFireDepartment
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Waves
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -68,13 +78,28 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import `fun`.tryliner.android.R
 import `fun`.tryliner.android.core.model.DailyMixItem
 import `fun`.tryliner.android.core.model.Track
+import `fun`.tryliner.android.core.model.WaveVibe
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.material3.Surface
 import `fun`.tryliner.android.ui.components.LinerCoverArt
 import `fun`.tryliner.android.ui.components.LinerGlassPillButton
 import `fun`.tryliner.android.ui.components.LinerPanel
 import `fun`.tryliner.android.ui.components.TrackRow
 import `fun`.tryliner.android.ui.theme.LinerColors
+import `fun`.tryliner.android.ui.theme.LinerMotion
 import `fun`.tryliner.android.ui.theme.LinerShapes
 import `fun`.tryliner.android.ui.theme.pressScale
+import `fun`.tryliner.android.ui.theme.rememberReducedMotion
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+
+private enum class HomeContentPhase {
+    LOADING,
+    ERROR,
+    EMPTY,
+    CONTENT
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -85,15 +110,39 @@ fun HomeScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val likedIds by viewModel.likedTrackIds.collectAsStateWithLifecycle()
-    val playbackState by viewModel.playbackState.collectAsStateWithLifecycle()
+    val currentPlayingTrackId by remember(viewModel) {
+        viewModel.playbackState.map { it.currentTrack?.id }.distinctUntilChanged()
+    }.collectAsStateWithLifecycle(initialValue = viewModel.playbackState.value.currentTrack?.id)
+    val waveUiState by remember(viewModel) {
+        viewModel.playbackState.map {
+            Triple(it.isWaveActive, it.isWaveLoading, Pair(it.isPlaying, it.waveVibe))
+        }.distinctUntilChanged()
+    }.collectAsStateWithLifecycle(
+        initialValue = Triple(
+            viewModel.playbackState.value.isWaveActive,
+            viewModel.playbackState.value.isWaveLoading,
+            Pair(viewModel.playbackState.value.isPlaying, viewModel.playbackState.value.waveVibe)
+        )
+    )
+    val (isWaveActive, isWaveLoading, wavePlayAndVibe) = waveUiState
+    val (isWavePlaying, activeWaveVibeId) = wavePlayAndVibe
+    var selectedWaveVibe by remember(activeWaveVibeId) {
+        mutableStateOf(WaveVibe.fromId(activeWaveVibeId))
+    }
     val haptics = LocalHapticFeedback.current
     val listState = rememberLazyListState()
     val localFallbackHaze = remember { HazeState() }
     val headerHazeState = LocalAppHazeState.current ?: localFallbackHaze
     val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val headerOverlayHeight = statusBarTop + 62.dp
-
-    val currentPlayingTrackId = playbackState.currentTrack?.id
+    val reducedMotion = rememberReducedMotion()
+    val pullRefreshState = rememberPullToRefreshState()
+    val contentPhase = when {
+        state.isLoading && state.isEmpty -> HomeContentPhase.LOADING
+        state.errorMessage != null && state.isEmpty -> HomeContentPhase.ERROR
+        state.isEmpty -> HomeContentPhase.EMPTY
+        else -> HomeContentPhase.CONTENT
+    }
 
     Box(
         modifier = Modifier.fillMaxSize()
@@ -103,76 +152,94 @@ fun HomeScreen(
                 .fillMaxSize()
                 .hazeSource(state = headerHazeState)
         ) {
-            when {
-                state.isLoading && state.isEmpty -> {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(top = headerOverlayHeight + 8.dp)
-                    ) {
-                        TrackListSkeleton(count = 8)
-                    }
-                }
-
-                state.errorMessage != null && state.isEmpty -> {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 16.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        LinerPanel(
-                            shape = LinerShapes.Panel,
-                            containerColor = Color.White.copy(alpha = 0.07f),
-                            borderColor = Color.Transparent
+            Crossfade(
+                targetState = contentPhase,
+                animationSpec = LinerMotion.easeOutTween(if (reducedMotion) 0 else LinerMotion.DURATION_NORMAL),
+                label = "homeContentPhase"
+            ) { phase ->
+                when (phase) {
+                    HomeContentPhase.LOADING -> {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(top = headerOverlayHeight + 8.dp)
                         ) {
-                            Column(
-                                modifier = Modifier.padding(24.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally
+                            TrackListSkeleton(count = 8)
+                        }
+                    }
+
+                    HomeContentPhase.ERROR -> {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 16.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            LinerPanel(
+                                shape = LinerShapes.Panel,
+                                containerColor = Color.White.copy(alpha = 0.07f),
+                                borderColor = Color.Transparent
                             ) {
-                                Text(
-                                    text = state.errorMessage.orEmpty(),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = LinerColors.TextSecondary
-                                )
-                                Spacer(modifier = Modifier.height(14.dp))
-                                LinerGlassPillButton(onClick = viewModel::refresh) {
-                                    Text("Попробовать снова")
+                                Column(
+                                    modifier = Modifier.padding(24.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Text(
+                                        text = state.errorMessage.orEmpty(),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = LinerColors.TextSecondary
+                                    )
+                                    Spacer(modifier = Modifier.height(14.dp))
+                                    LinerGlassPillButton(onClick = viewModel::refresh) {
+                                        Text("Попробовать снова")
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                state.isEmpty -> {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                text = "Пока здесь пусто",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = LinerColors.TextSecondary
-                            )
-                            Spacer(modifier = Modifier.height(12.dp))
-                            LinerGlassPillButton(onClick = viewModel::refresh) {
-                                Text("Обновить")
+                    HomeContentPhase.EMPTY -> {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = "Пока здесь пусто",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = LinerColors.TextSecondary
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                                LinerGlassPillButton(onClick = viewModel::refresh) {
+                                    Text("Обновить")
+                                }
                             }
                         }
                     }
-                }
 
-                else -> {
-                    PullToRefreshBox(
-                        isRefreshing = state.isLoading && !state.isEmpty,
-                        onRefresh = {
-                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            viewModel.refresh()
-                        },
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        LazyColumn(
+                    HomeContentPhase.CONTENT -> {
+                        val isRefreshing = state.isLoading && !state.isEmpty
+                        PullToRefreshBox(
+                            isRefreshing = isRefreshing,
+                            onRefresh = {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                viewModel.refresh()
+                            },
+                            state = pullRefreshState,
+                            indicator = {
+                                PullToRefreshDefaults.Indicator(
+                                    state = pullRefreshState,
+                                    isRefreshing = isRefreshing,
+                                    containerColor = LinerColors.BgElevated,
+                                    color = LinerColors.TextPrimary,
+                                    modifier = Modifier
+                                        .align(Alignment.TopCenter)
+                                        .padding(top = headerOverlayHeight + 6.dp)
+                                )
+                            },
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            LazyColumn(
                             state = listState,
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(
@@ -180,6 +247,27 @@ fun HomeScreen(
                                 bottom = (bottomContentPadding.calculateBottomPadding() + 24.dp).coerceAtLeast(148.dp)
                             )
                         ) {
+                    // My Wave hero card ("Моя волна")
+                    item(key = "my_wave_banner") {
+                        MyWaveBanner(
+                            selectedVibe = selectedWaveVibe,
+                            isActive = isWaveActive,
+                            isPlaying = isWaveActive && isWavePlaying,
+                            isLoading = isWaveLoading,
+                            onPlayToggle = {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                viewModel.startOrToggleMyWave(selectedWaveVibe)
+                            },
+                            onSelectVibe = { vibe ->
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                selectedWaveVibe = vibe
+                                viewModel.selectWaveVibe(vibe)
+                            },
+                            modifier = Modifier.padding(horizontal = 16.dp)
+                        )
+                        Spacer(modifier = Modifier.height(18.dp))
+                    }
+
                     // Compact 2-column quick-access grid (Spotify / Desktop style, zero vertical bloat)
                     val quickTracks = if (state.recentTracks.isNotEmpty()) {
                         state.recentTracks.take(6)
@@ -350,7 +438,8 @@ fun HomeScreen(
                             Spacer(modifier = Modifier.height(16.dp))
                         }
                     }
-                }
+                        }
+                    }
                 }
             }
         }
@@ -419,12 +508,18 @@ private fun QuickAccessTile(
     modifier: Modifier = Modifier
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    val reducedMotion = rememberReducedMotion()
+    val bgColor by animateColorAsState(
+        targetValue = if (isPlayingCurrent) LinerColors.FillHover else LinerColors.Fill,
+        animationSpec = LinerMotion.easeOutTween(if (reducedMotion) 0 else LinerMotion.DURATION_FAST),
+        label = "quickTileBg"
+    )
     Row(
         modifier = modifier
             .height(52.dp)
             .pressScale(interactionSource, targetScale = 0.97f)
             .clip(LinerShapes.Control)
-            .background(if (isPlayingCurrent) LinerColors.FillHover else LinerColors.Fill)
+            .background(bgColor)
             .clickable(interactionSource = interactionSource, indication = null, onClick = onClick),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -488,6 +583,7 @@ private fun SquareTrackCard(
 ) {
     val cardShape = RoundedCornerShape(12.dp)
     val interactionSource = remember { MutableInteractionSource() }
+    val reducedMotion = rememberReducedMotion()
     Column(
         modifier = Modifier
             .width(132.dp)
@@ -503,7 +599,11 @@ private fun SquareTrackCard(
                 size = 132.dp,
                 shape = cardShape
             )
-            if (isPlayingCurrent) {
+            androidx.compose.animation.AnimatedVisibility(
+                visible = isPlayingCurrent,
+                enter = fadeIn(LinerMotion.easeOutTween(if (reducedMotion) 0 else LinerMotion.DURATION_FAST)),
+                exit = fadeOut(LinerMotion.easeOutTween(if (reducedMotion) 0 else LinerMotion.DURATION_FAST))
+            ) {
                 Box(
                     modifier = Modifier
                         .size(132.dp)
@@ -533,7 +633,7 @@ private fun SquareTrackCard(
             overflow = TextOverflow.Ellipsis
         )
         Text(
-            text = track.artistNames.ifBlank { "Unknown Artist" },
+            text = track.artistNames.ifBlank { "Неизвестный артист" },
             style = MaterialTheme.typography.bodySmall,
             color = LinerColors.TextSecondary,
             maxLines = 1,
@@ -557,11 +657,14 @@ private fun DailyMixCard(
         ?.joinToString(", ")
         ?: mix.description
 
+    val interactionSource = remember { MutableInteractionSource() }
+
     Column(
         modifier = Modifier
             .width(132.dp)
+            .pressScale(interactionSource, targetScale = 0.96f)
             .clip(cardShape)
-            .clickable(onClick = onClick)
+            .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
             .padding(bottom = 4.dp)
     ) {
         LinerCoverArt(
@@ -588,6 +691,172 @@ private fun DailyMixCard(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+        }
+    }
+}
+
+@Composable
+private fun MyWaveBanner(
+    selectedVibe: WaveVibe,
+    isActive: Boolean,
+    isPlaying: Boolean,
+    isLoading: Boolean,
+    onPlayToggle: () -> Unit,
+    onSelectVibe: (WaveVibe) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val reducedMotion = rememberReducedMotion()
+    val fastDuration = if (reducedMotion) 0 else LinerMotion.DURATION_FAST
+    val playInteraction = remember { MutableInteractionSource() }
+
+    LinerPanel(
+        modifier = modifier.fillMaxWidth(),
+        shape = LinerShapes.BigArt,
+        containerColor = LinerColors.FillSubtle,
+        borderColor = Color.Transparent
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    Brush.linearGradient(
+                        colors = listOf(
+                            Color.White.copy(alpha = if (isActive) 0.12f else 0.06f),
+                            Color.Transparent
+                        )
+                    )
+                )
+                .padding(16.dp)
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(LinerShapes.Item)
+                                .background(
+                                    if (isActive) Color.White else Color.White.copy(alpha = 0.12f)
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Waves,
+                                contentDescription = null,
+                                tint = if (isActive) LinerColors.BtnPrimaryText else LinerColors.TextPrimary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Моя волна",
+                                style = MaterialTheme.typography.titleLarge.copy(
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                color = LinerColors.TextPrimary
+                            )
+                            Text(
+                                text = if (isActive) {
+                                    "Настроение: ${selectedVibe.label}"
+                                } else {
+                                    "Бесконечный поток под твой вкус"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = LinerColors.TextSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.width(10.dp))
+
+                    Surface(
+                        onClick = onPlayToggle,
+                        enabled = !isLoading,
+                        interactionSource = playInteraction,
+                        shape = CircleShape,
+                        color = LinerColors.BtnPrimaryBg,
+                        modifier = Modifier
+                            .height(40.dp)
+                            .pressScale(playInteraction, targetScale = 0.95f)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            if (isLoading) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                    color = LinerColors.BtnPrimaryText
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                    contentDescription = null,
+                                    tint = LinerColors.BtnPrimaryText,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Text(
+                                text = if (isPlaying) "Пауза" else "Слушать",
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                                color = LinerColors.BtnPrimaryText
+                            )
+                        }
+                    }
+                }
+
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    itemsIndexed(
+                        items = WaveVibe.entries,
+                        key = { _, v -> v.id }
+                    ) { _, vibe ->
+                        val isSelected = selectedVibe == vibe
+                        val chipInteraction = remember(vibe) { MutableInteractionSource() }
+                        val chipBg by animateColorAsState(
+                            targetValue = if (isSelected) Color.White else Color.White.copy(alpha = 0.08f),
+                            animationSpec = LinerMotion.easeOutTween(fastDuration),
+                            label = "waveVibeChipBg"
+                        )
+                        val chipText by animateColorAsState(
+                            targetValue = if (isSelected) LinerColors.BtnPrimaryText else LinerColors.TextSecondary,
+                            animationSpec = LinerMotion.easeOutTween(fastDuration),
+                            label = "waveVibeChipText"
+                        )
+                        Surface(
+                            onClick = { onSelectVibe(vibe) },
+                            interactionSource = chipInteraction,
+                            shape = LinerShapes.Control,
+                            color = chipBg,
+                            modifier = Modifier.pressScale(chipInteraction, targetScale = 0.95f)
+                        ) {
+                            Text(
+                                text = vibe.label,
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium
+                                ),
+                                color = chipText,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }

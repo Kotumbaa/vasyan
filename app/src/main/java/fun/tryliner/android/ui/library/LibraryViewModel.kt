@@ -8,6 +8,7 @@ import `fun`.tryliner.android.core.model.Track
 import `fun`.tryliner.android.core.model.UserPlaylist
 import `fun`.tryliner.android.playback.PlaybackUiState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -51,6 +52,8 @@ class LibraryViewModel(
     val playbackState: StateFlow<PlaybackUiState> = container.playerController.state
     val downloadedTracks: StateFlow<List<Track>> = container.downloadManager.downloadedTracks
 
+    private var refreshJob: Job? = null
+
     fun playDownloaded(index: Int, shuffle: Boolean = false) {
         val tracks = downloadedTracks.value
         if (tracks.isNotEmpty()) {
@@ -67,9 +70,10 @@ class LibraryViewModel(
     }
 
     fun refresh() {
+        refreshJob?.cancel()
         _state.update { it.copy(isLoading = true, errorMessage = null) }
 
-        viewModelScope.launch {
+        refreshJob = viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
                     val playlistsDeferred = async { container.apiClient.listPlaylists() }
@@ -116,7 +120,7 @@ class LibraryViewModel(
                 _state.update {
                     it.copy(
                         isLoading = false,
-                        errorMessage = error.message ?: "Failed to load library"
+                        errorMessage = error.message ?: "Не удалось загрузить медиатеку"
                     )
                 }
             }
@@ -180,7 +184,7 @@ class LibraryViewModel(
         if (_state.value.isCreatingPlaylist) return
         val trimmedTitle = title.trim()
         if (trimmedTitle.isEmpty()) {
-            _state.update { it.copy(createPlaylistError = "Playlist name is required") }
+            _state.update { it.copy(createPlaylistError = "Введите название плейлиста") }
             return
         }
         val trimmedDescription = description?.trim()?.takeIf { it.isNotEmpty() }
@@ -208,7 +212,7 @@ class LibraryViewModel(
                 _state.update {
                     it.copy(
                         isCreatingPlaylist = false,
-                        createPlaylistError = error.message ?: "Failed to create playlist"
+                        createPlaylistError = error.message ?: "Не удалось создать плейлист"
                     )
                 }
             }

@@ -1,7 +1,18 @@
 package `fun`.tryliner.android.ui.components
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import `fun`.tryliner.android.ui.theme.LinerMotion
+import `fun`.tryliner.android.ui.theme.pressScale
+import `fun`.tryliner.android.ui.theme.rememberReducedMotion
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -75,10 +86,26 @@ fun TrackActionSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
+    val reducedMotion = rememberReducedMotion()
+    val fastDuration = if (reducedMotion) 0 else LinerMotion.DURATION_FAST
+    val normalDuration = if (reducedMotion) 0 else LinerMotion.DURATION_NORMAL
     val likedIds by container.likedTrackIds.collectAsStateWithLifecycle()
     val downloadStates by container.downloadManager.states.collectAsStateWithLifecycle()
     val isLiked = likedIds.contains(track.id)
     val isDownloaded = downloadStates[track.id] is TrackDownloadState.Downloaded
+
+    fun dismissWithAnimation(afterDismiss: (() -> Unit)? = null) {
+        if (reducedMotion) {
+            onDismiss()
+            afterDismiss?.invoke()
+        } else {
+            scope.launch {
+                runCatching { sheetState.hide() }
+                onDismiss()
+                afterDismiss?.invoke()
+            }
+        }
+    }
 
     var showPlaylistPicker by remember { mutableStateOf(false) }
     var playlists by remember { mutableStateOf<List<UserPlaylist>>(emptyList()) }
@@ -106,7 +133,7 @@ fun TrackActionSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF13161D),
+        containerColor = LinerColors.BgElevated,
         contentColor = Color.White,
         dragHandle = {
             Box(
@@ -123,6 +150,9 @@ fun TrackActionSheet(
                 .fillMaxWidth()
                 .navigationBarsPadding()
                 .padding(bottom = 16.dp)
+                .animateContentSize(
+                    animationSpec = if (reducedMotion) tween(0) else LinerMotion.appleDefaultSpring()
+                )
         ) {
             // Header
             Row(
@@ -156,7 +186,11 @@ fun TrackActionSheet(
                 }
             }
 
-            if (statusMessage != null) {
+            AnimatedVisibility(
+                visible = statusMessage != null,
+                enter = fadeIn(LinerMotion.easeOutTween(fastDuration)),
+                exit = fadeOut(LinerMotion.easeOutTween(fastDuration))
+            ) {
                 Text(
                     text = statusMessage.orEmpty(),
                     style = MaterialTheme.typography.labelMedium,
@@ -170,127 +204,156 @@ fun TrackActionSheet(
                 modifier = Modifier.padding(vertical = 6.dp)
             )
 
-            if (showPlaylistPicker) {
-                Text(
-                    text = "Выберите плейлист",
-                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-                    color = LinerColors.TextSecondary,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
-                )
-                if (loadingPlaylists) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 24.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        CircularProgressIndicator(
-                            color = Color.White,
-                            strokeWidth = 2.dp,
-                            modifier = Modifier.size(22.dp)
+            AnimatedContent(
+                targetState = showPlaylistPicker,
+                transitionSpec = {
+                    fadeIn(LinerMotion.easeOutTween(normalDuration)) togetherWith
+                        fadeOut(LinerMotion.easeOutTween(fastDuration))
+                },
+                label = "trackActionSheetMode"
+            ) { isPicker ->
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    if (isPicker) {
+                        Text(
+                            text = "Выберите плейлист",
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                            color = LinerColors.TextSecondary,
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
                         )
-                    }
-                } else if (playlists.isEmpty()) {
-                    Text(
-                        text = "Нет плейлистов",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = LinerColors.TextTertiary,
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp)
-                    )
-                } else {
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 280.dp)
-                    ) {
-                        items(playlists, key = { it.id }) { pl ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        scope.launch {
-                                            val ok = runCatching {
-                                                withContext(Dispatchers.IO) {
-                                                    container.apiClient.addPlaylistTrack(pl.id, track.id, track)
+                        val pickerState = when {
+                            loadingPlaylists -> 0
+                            playlists.isEmpty() -> 1
+                            else -> 2
+                        }
+                        AnimatedContent(
+                            targetState = pickerState,
+                            transitionSpec = {
+                                fadeIn(LinerMotion.easeOutTween(normalDuration)) togetherWith
+                                    fadeOut(LinerMotion.easeOutTween(fastDuration))
+                            },
+                            label = "playlistPickerState"
+                        ) { stateKey ->
+                            when (stateKey) {
+                                0 -> Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 24.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    CircularProgressIndicator(
+                                        color = Color.White,
+                                        strokeWidth = 2.dp,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
+                                1 -> Text(
+                                    text = "Нет плейлистов",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = LinerColors.TextTertiary,
+                                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp)
+                                )
+                                else -> LazyColumn(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(max = 280.dp)
+                                ) {
+                                    items(playlists, key = { it.id }) { pl ->
+                                        val rowInteraction = remember { MutableInteractionSource() }
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .pressScale(rowInteraction, targetScale = 0.98f)
+                                                .clickable(
+                                                    interactionSource = rowInteraction,
+                                                    indication = null
+                                                ) {
+                                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                    scope.launch {
+                                                        val ok = runCatching {
+                                                            withContext(Dispatchers.IO) {
+                                                                container.apiClient.addPlaylistTrack(pl.id, track.id, track)
+                                                            }
+                                                        }.isSuccess
+                                                        statusMessage = if (ok) "Добавлено в «${pl.title}»" else "Не удалось добавить"
+                                                        showPlaylistPicker = false
+                                                    }
                                                 }
-                                            }.isSuccess
-                                            statusMessage = if (ok) "Добавлено в «${pl.title}»" else "Не удалось добавить"
-                                            showPlaylistPicker = false
+                                                .padding(horizontal = 20.dp, vertical = 12.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            LinerCoverArt(
+                                                url = pl.coverUrls?.firstOrNull(),
+                                                contentDescription = pl.title,
+                                                size = 40.dp,
+                                                shape = LinerShapes.Tile
+                                            )
+                                            Spacer(modifier = Modifier.width(12.dp))
+                                            Text(
+                                                text = pl.title,
+                                                style = MaterialTheme.typography.bodyLarge,
+                                                color = LinerColors.TextPrimary,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
                                         }
                                     }
-                                    .padding(horizontal = 20.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                LinerCoverArt(
-                                    url = pl.coverUrls?.firstOrNull(),
-                                    contentDescription = pl.title,
-                                    size = 40.dp,
-                                    shape = LinerShapes.Tile
-                                )
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Text(
-                                    text = pl.title,
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = LinerColors.TextPrimary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                                }
                             }
                         }
+                    } else {
+                        SheetActionRow(
+                            icon = Icons.AutoMirrored.Rounded.QueueMusic,
+                            label = "Играть следующим",
+                            onClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                container.playerController.playNext(track)
+                                dismissWithAnimation()
+                            }
+                        )
+                        SheetActionRow(
+                            icon = Icons.AutoMirrored.Rounded.PlaylistAdd,
+                            label = "Добавить в плейлист",
+                            onClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                showPlaylistPicker = true
+                            }
+                        )
+                        SheetActionRow(
+                            icon = if (isLiked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                            label = if (isLiked) "Убрать из понравившихся" else "В понравившиеся",
+                            onClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                container.toggleLike(track)
+                                dismissWithAnimation()
+                            }
+                        )
+                        if (artistTargetId != null) {
+                            SheetActionRow(
+                                icon = Icons.Rounded.Person,
+                                label = "Перейти к артисту",
+                                onClick = {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    dismissWithAnimation {
+                                        onOpenArtist(artistTargetId)
+                                    }
+                                }
+                            )
+                        }
+                        SheetActionRow(
+                            icon = if (isDownloaded) Icons.Rounded.DownloadDone else Icons.Rounded.Download,
+                            label = if (isDownloaded) "Удалить из загрузок" else "Скачать офлайн",
+                            onClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                if (isDownloaded) {
+                                    container.downloadManager.delete(track.id)
+                                } else {
+                                    container.downloadManager.download(track)
+                                }
+                                dismissWithAnimation()
+                            }
+                        )
                     }
                 }
-            } else {
-                SheetActionRow(
-                    icon = Icons.AutoMirrored.Rounded.QueueMusic,
-                    label = "Играть следующим",
-                    onClick = {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        container.playerController.playNext(track)
-                        onDismiss()
-                    }
-                )
-                SheetActionRow(
-                    icon = Icons.AutoMirrored.Rounded.PlaylistAdd,
-                    label = "Добавить в плейлист",
-                    onClick = {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        showPlaylistPicker = true
-                    }
-                )
-                SheetActionRow(
-                    icon = if (isLiked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                    label = if (isLiked) "Убрать из понравившихся" else "В понравившиеся",
-                    onClick = {
-                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        container.toggleLike(track)
-                        onDismiss()
-                    }
-                )
-                if (artistTargetId != null) {
-                    SheetActionRow(
-                        icon = Icons.Rounded.Person,
-                        label = "Перейти к артисту",
-                        onClick = {
-                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onDismiss()
-                            onOpenArtist(artistTargetId)
-                        }
-                    )
-                }
-                SheetActionRow(
-                    icon = if (isDownloaded) Icons.Rounded.DownloadDone else Icons.Rounded.Download,
-                    label = if (isDownloaded) "Удалить из загрузок" else "Скачать офлайн",
-                    onClick = {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        if (isDownloaded) {
-                            container.downloadManager.delete(track.id)
-                        } else {
-                            container.downloadManager.download(track)
-                        }
-                        onDismiss()
-                    }
-                )
             }
         }
     }
@@ -302,10 +365,16 @@ private fun SheetActionRow(
     label: String,
     onClick: () -> Unit
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .pressScale(interactionSource, targetScale = 0.98f)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick
+            )
             .padding(horizontal = 20.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp)

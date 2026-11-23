@@ -1,7 +1,22 @@
 package `fun`.tryliner.android.ui.artist
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.graphicsLayer
+import `fun`.tryliner.android.ui.components.LinerShimmerBox
+import `fun`.tryliner.android.ui.components.TrackListSkeleton
+import `fun`.tryliner.android.ui.components.rememberShimmerAlphaState
+import `fun`.tryliner.android.ui.theme.rememberReducedMotion
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -10,17 +25,22 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -53,6 +73,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.HazeStyle
+import dev.chrisbanes.haze.HazeTint
+import dev.chrisbanes.haze.hazeEffect
 import dev.chrisbanes.haze.hazeSource
 import `fun`.tryliner.android.AppContainer
 import `fun`.tryliner.android.R
@@ -78,48 +102,367 @@ fun ArtistScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val likedIds by container.likedTrackIds.collectAsStateWithLifecycle()
-    val playbackState by container.playerController.state.collectAsStateWithLifecycle()
+    val currentTrackIdFlow = remember(container) {
+        container.playerController.state.map { it.currentTrack?.id }.distinctUntilChanged()
+    }
+    val currentPlayingTrackId by currentTrackIdFlow.collectAsStateWithLifecycle(
+        initialValue = container.playerController.state.value.currentTrack?.id
+    )
+    val reducedMotion = rememberReducedMotion()
+    val fastDuration = if (reducedMotion) 0 else LinerMotion.DURATION_FAST
+    val normalDuration = if (reducedMotion) 0 else LinerMotion.DURATION_NORMAL
+    val ambientDuration = if (reducedMotion) 0 else LinerMotion.DURATION_AMBIENT
     val haptics = LocalHapticFeedback.current
 
     val artist = state.artist
     val coverUrl = artist?.cover?.url ?: artist?.cover?.fallbackUrl
     val ambient = rememberCoverAmbient(coverUrl)
     val topTint = ambient?.backdropColor ?: LinerColors.AmbientBlue
-    val appHazeState = LocalAppHazeState.current
+    val animatedTopTintState = animateColorAsState(
+        targetValue = topTint,
+        animationSpec = LinerMotion.easeOutTween(ambientDuration),
+        label = "artistAmbientTopTint"
+    )
+    val localFallbackHaze = remember { HazeState() }
+    val appHazeState = LocalAppHazeState.current ?: localFallbackHaze
+    val listState = rememberLazyListState()
+    val showStickyTitle by remember {
+        derivedStateOf { listState.firstVisibleItemIndex > 0 }
+    }
+    val isScrolled by remember {
+        derivedStateOf {
+            listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 12
+        }
+    }
+    val headerBlurAlpha by animateFloatAsState(
+        targetValue = if (isScrolled) 1f else 0f,
+        animationSpec = LinerMotion.easeOutTween(fastDuration),
+        label = "artistHeaderBlurAlpha"
+    )
+    val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val headerOverlayHeight = statusBarTop + 58.dp
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .then(if (appHazeState != null) Modifier.hazeSource(appHazeState) else Modifier)
             .background(ArtistBackdropTarget)
     ) {
         Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .height(380.dp)
-                .background(
-                    Brush.verticalGradient(
-                        0.0f to topTint.copy(alpha = 0.72f),
-                        0.56f to ArtistBackdropTarget.copy(alpha = 0.86f),
-                        1.0f to ArtistBackdropTarget
-                    )
-                )
-        )
+                .fillMaxSize()
+                .hazeSource(appHazeState)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(380.dp)
+                    .drawBehind {
+                        val tint = animatedTopTintState.value
+                        drawRect(
+                            brush = Brush.verticalGradient(
+                                0.0f to tint.copy(alpha = 0.72f),
+                                0.56f to ArtistBackdropTarget.copy(alpha = 0.86f),
+                                1.0f to ArtistBackdropTarget
+                            )
+                        )
+                    }
+            )
 
-        Column(modifier = Modifier.fillMaxSize()) {
-            // Floating glass Back button
+            val contentPhase = when {
+                state.isLoading -> 0
+                state.errorMessage != null || artist == null -> 1
+                else -> 2
+            }
+            Crossfade(
+                targetState = contentPhase,
+                animationSpec = LinerMotion.easeOutTween(normalDuration),
+                label = "artistContentPhase"
+            ) { phase ->
+                when (phase) {
+                    0 -> {
+                        val sharedAlpha = rememberShimmerAlphaState()
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(top = headerOverlayHeight + 8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                LinerShimmerBox(
+                                    modifier = Modifier.size(116.dp),
+                                    shape = CircleShape,
+                                    shimmerAlpha = sharedAlpha
+                                )
+                                Spacer(modifier = Modifier.width(16.dp))
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    LinerShimmerBox(
+                                        modifier = Modifier
+                                            .fillMaxWidth(0.68f)
+                                            .height(24.dp),
+                                        shimmerAlpha = sharedAlpha
+                                    )
+                                    LinerShimmerBox(
+                                        modifier = Modifier
+                                            .width(110.dp)
+                                            .height(22.dp),
+                                        shape = LinerShapes.HeroButton,
+                                        shimmerAlpha = sharedAlpha
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(18.dp))
+                            Row(
+                                modifier = Modifier.padding(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                LinerShimmerBox(
+                                    modifier = Modifier
+                                        .width(120.dp)
+                                        .height(40.dp),
+                                    shape = CircleShape,
+                                    shimmerAlpha = sharedAlpha
+                                )
+                                LinerShimmerBox(
+                                    modifier = Modifier.size(40.dp),
+                                    shape = CircleShape,
+                                    shimmerAlpha = sharedAlpha
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(22.dp))
+                            TrackListSkeleton(count = 6)
+                        }
+                    }
+                    1 -> {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 24.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Surface(
+                                shape = LinerShapes.Panel,
+                                color = LinerColors.FillSubtle
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(24.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Text(
+                                        text = state.errorMessage ?: "Не удалось загрузить артиста",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = LinerColors.TextSecondary
+                                    )
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    TextButton(onClick = viewModel::load) {
+                                        Text("Повторить", color = Color.White)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    else -> {
+                        val loadedArtist = artist ?: return@Crossfade
+                        val listBottomPadding = (bottomContentPadding.calculateBottomPadding() + 24.dp)
+                            .coerceAtLeast(140.dp)
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(
+                                top = headerOverlayHeight + 4.dp,
+                                bottom = listBottomPadding
+                            )
+                        ) {
+                            item(key = "artist_hero") {
+                                ArtistHeroHeader(
+                                    artist = loadedArtist,
+                                    onPlayAll = {
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        viewModel.playAll(shuffle = false)
+                                    },
+                                    onShuffle = {
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        viewModel.playAll(shuffle = true)
+                                    }
+                                )
+                                Spacer(modifier = Modifier.height(20.dp))
+                            }
+
+                            if (loadedArtist.tracks.isNotEmpty()) {
+                                item(key = "tracks_header") {
+                                    Text(
+                                        text = "Популярное",
+                                        style = MaterialTheme.typography.titleMedium.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            letterSpacing = (-0.01).sp
+                                        ),
+                                        color = LinerColors.TextPrimary,
+                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                                    )
+                                }
+
+                                val topTracks = loadedArtist.tracks.take(10)
+                                itemsIndexed(
+                                    items = topTracks,
+                                    key = { index, track -> "artist_track_${index}_${track.id}" }
+                                ) { index, track ->
+                                    val isLiked = likedIds.contains(track.id)
+                                    val isPlayingCurrent = currentPlayingTrackId == track.id
+                                    TrackRow(
+                                        track = track,
+                                        isLiked = isLiked,
+                                        isPlayingCurrent = isPlayingCurrent,
+                                        onClick = { viewModel.playTrackAt(index) },
+                                        onToggleLike = { viewModel.toggleLike(track) },
+                                        modifier = Modifier.padding(horizontal = 12.dp)
+                                    )
+                                }
+
+                                item(key = "tracks_spacer") {
+                                    Spacer(modifier = Modifier.height(22.dp))
+                                }
+                            }
+
+                            if (loadedArtist.albums.isNotEmpty()) {
+                                item(key = "albums_header") {
+                                    Text(
+                                        text = "Альбомы",
+                                        style = MaterialTheme.typography.titleMedium.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            letterSpacing = (-0.01).sp
+                                        ),
+                                        color = LinerColors.TextPrimary,
+                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                                    )
+                                }
+                                item(key = "albums_carousel") {
+                                    LazyRow(
+                                        contentPadding = PaddingValues(horizontal = 16.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        items(
+                                            items = loadedArtist.albums,
+                                            key = { it.id }
+                                        ) { album ->
+                                            ReleaseCard(
+                                                title = album.title,
+                                                subtitle = album.year?.toString() ?: "Альбом",
+                                                coverUrl = album.cover?.url ?: album.cover?.fallbackUrl,
+                                                onClick = {
+                                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                    onOpenAlbum(album.id)
+                                                }
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(22.dp))
+                                }
+                            }
+
+                            if (loadedArtist.singles.isNotEmpty()) {
+                                item(key = "singles_header") {
+                                    Text(
+                                        text = "Синглы и EP",
+                                        style = MaterialTheme.typography.titleMedium.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            letterSpacing = (-0.01).sp
+                                        ),
+                                        color = LinerColors.TextPrimary,
+                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                                    )
+                                }
+                                item(key = "singles_carousel") {
+                                    LazyRow(
+                                        contentPadding = PaddingValues(horizontal = 16.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        items(
+                                            items = loadedArtist.singles,
+                                            key = { it.id }
+                                        ) { single ->
+                                            val typeLabel = if (single.releaseType.equals("ep", ignoreCase = true)) {
+                                                "EP"
+                                            } else {
+                                                "Сингл"
+                                            }
+                                            val subtitle = listOfNotNull(
+                                                single.year?.toString(),
+                                                typeLabel
+                                            ).joinToString(" · ")
+                                            ReleaseCard(
+                                                title = single.title,
+                                                subtitle = subtitle,
+                                                coverUrl = single.cover?.url ?: single.cover?.fallbackUrl,
+                                                onClick = {
+                                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                    onOpenAlbum(single.id)
+                                                }
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Top bar overlay: frosted-glass translucent + backdrop blur when scrolled
+        val backInteraction = remember { MutableInteractionSource() }
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+        ) {
+            if (headerBlurAlpha > 0.001f) {
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .graphicsLayer { alpha = headerBlurAlpha }
+                        .hazeEffect(
+                            state = appHazeState,
+                            style = HazeStyle(
+                                backgroundColor = Color(0xFF0D0F14),
+                                tint = HazeTint(Color(0xFF0D0F14).copy(alpha = 0.56f)),
+                                blurRadius = 24.dp
+                            )
+                        )
+                        .background(
+                            Brush.verticalGradient(
+                                0.0f to Color(0x550A0C10),
+                                0.96f to Color.Transparent,
+                                1.0f to Color.White.copy(alpha = 0.05f)
+                            )
+                        )
+                )
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .statusBarsPadding()
                     .padding(horizontal = 16.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Surface(
-                    onClick = onBack,
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onBack()
+                    },
+                    interactionSource = backInteraction,
                     shape = CircleShape,
                     color = Color.White.copy(alpha = 0.12f),
-                    modifier = Modifier.size(38.dp)
+                    modifier = Modifier
+                        .size(38.dp)
+                        .pressScale(backInteraction)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
@@ -130,182 +473,23 @@ fun ArtistScreen(
                         )
                     }
                 }
-            }
 
-            when {
-                state.isLoading -> {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = Color.White.copy(alpha = 0.80f))
-                    }
-                }
-                state.errorMessage != null || artist == null -> {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 24.dp),
-                        contentAlignment = Alignment.Center
+                Box(
+                    modifier = Modifier.weight(1f),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = showStickyTitle && artist != null,
+                        enter = fadeIn(LinerMotion.easeOutTween(fastDuration)),
+                        exit = fadeOut(LinerMotion.easeOutTween(fastDuration))
                     ) {
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = LinerColors.FillSubtle
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(24.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally
-                            ) {
-                                Text(
-                                    text = state.errorMessage ?: "Failed to load artist",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = LinerColors.TextSecondary
-                                )
-                                Spacer(modifier = Modifier.height(10.dp))
-                                TextButton(onClick = viewModel::load) {
-                                    Text("Retry", color = Color.White)
-                                }
-                            }
-                        }
-                    }
-                }
-                else -> {
-                    val listBottomPadding = (bottomContentPadding.calculateBottomPadding() + 24.dp)
-                        .coerceAtLeast(140.dp)
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(
-                            top = 4.dp,
-                            bottom = listBottomPadding
+                        Text(
+                            text = artist?.name.orEmpty(),
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = LinerColors.TextPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
-                    ) {
-                        item(key = "artist_hero") {
-                            ArtistHeroHeader(
-                                artist = artist,
-                                onPlayAll = {
-                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    viewModel.playAll(shuffle = false)
-                                },
-                                onShuffle = {
-                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    viewModel.playAll(shuffle = true)
-                                }
-                            )
-                            Spacer(modifier = Modifier.height(20.dp))
-                        }
-
-                        if (artist.tracks.isNotEmpty()) {
-                            item(key = "tracks_header") {
-                                Text(
-                                    text = "Популярное",
-                                    style = MaterialTheme.typography.titleMedium.copy(
-                                        fontWeight = FontWeight.Bold,
-                                        letterSpacing = (-0.01).sp
-                                    ),
-                                    color = LinerColors.TextPrimary,
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
-                                )
-                            }
-
-                            val topTracks = artist.tracks.take(10)
-                            itemsIndexed(
-                                items = topTracks,
-                                key = { index, track -> "artist_track_${index}_${track.id}" }
-                            ) { index, track ->
-                                val isLiked = likedIds.contains(track.id)
-                                val isPlayingCurrent = playbackState.currentTrack?.id == track.id
-                                TrackRow(
-                                    track = track,
-                                    isLiked = isLiked,
-                                    isPlayingCurrent = isPlayingCurrent,
-                                    onClick = { viewModel.playTrackAt(index) },
-                                    onToggleLike = { viewModel.toggleLike(track) },
-                                    modifier = Modifier.padding(horizontal = 12.dp)
-                                )
-                            }
-
-                            item(key = "tracks_spacer") {
-                                Spacer(modifier = Modifier.height(22.dp))
-                            }
-                        }
-
-                        if (artist.albums.isNotEmpty()) {
-                            item(key = "albums_header") {
-                                Text(
-                                    text = "Альбомы",
-                                    style = MaterialTheme.typography.titleMedium.copy(
-                                        fontWeight = FontWeight.Bold,
-                                        letterSpacing = (-0.01).sp
-                                    ),
-                                    color = LinerColors.TextPrimary,
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
-                                )
-                            }
-                            item(key = "albums_carousel") {
-                                LazyRow(
-                                    contentPadding = PaddingValues(horizontal = 16.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    items(
-                                        items = artist.albums,
-                                        key = { it.id }
-                                    ) { album ->
-                                        ReleaseCard(
-                                            title = album.title,
-                                            subtitle = album.year?.toString() ?: "Album",
-                                            coverUrl = album.cover?.url ?: album.cover?.fallbackUrl,
-                                            onClick = {
-                                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                onOpenAlbum(album.id)
-                                            }
-                                        )
-                                    }
-                                }
-                                Spacer(modifier = Modifier.height(22.dp))
-                            }
-                        }
-
-                        if (artist.singles.isNotEmpty()) {
-                            item(key = "singles_header") {
-                                Text(
-                                    text = "Синглы и EP",
-                                    style = MaterialTheme.typography.titleMedium.copy(
-                                        fontWeight = FontWeight.Bold,
-                                        letterSpacing = (-0.01).sp
-                                    ),
-                                    color = LinerColors.TextPrimary,
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
-                                )
-                            }
-                            item(key = "singles_carousel") {
-                                LazyRow(
-                                    contentPadding = PaddingValues(horizontal = 16.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    items(
-                                        items = artist.singles,
-                                        key = { it.id }
-                                    ) { single ->
-                                        val typeLabel = if (single.releaseType.equals("ep", ignoreCase = true)) {
-                                            "EP"
-                                        } else {
-                                            "Single"
-                                        }
-                                        val subtitle = listOfNotNull(
-                                            single.year?.toString(),
-                                            typeLabel
-                                        ).joinToString(" · ")
-                                        ReleaseCard(
-                                            title = single.title,
-                                            subtitle = subtitle,
-                                            coverUrl = single.cover?.url ?: single.cover?.fallbackUrl,
-                                            onClick = {
-                                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                onOpenAlbum(single.id)
-                                            }
-                                        )
-                                    }
-                                }
-                                Spacer(modifier = Modifier.height(16.dp))
-                            }
-                        }
                     }
                 }
             }
@@ -320,6 +504,7 @@ private fun ArtistHeroHeader(
     onShuffle: () -> Unit,
 ) {
     var bioExpanded by remember { mutableStateOf(false) }
+    val reducedMotion = rememberReducedMotion()
     val playInteraction = remember { MutableInteractionSource() }
     val shuffleInteraction = remember { MutableInteractionSource() }
 
@@ -361,7 +546,7 @@ private fun ArtistHeroHeader(
                         Spacer(modifier = Modifier.width(6.dp))
                         Icon(
                             imageVector = Icons.Rounded.Verified,
-                            contentDescription = "Verified",
+                            contentDescription = "Подтверждённый артист",
                             tint = Color.White.copy(alpha = 0.85f),
                             modifier = Modifier.size(18.dp)
                         )
@@ -396,7 +581,7 @@ private fun ArtistHeroHeader(
                 maxLines = if (bioExpanded) 12 else 2,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
-                    .animateContentSize(LinerMotion.appleDefaultSpring())
+                    .animateContentSize(if (reducedMotion) tween(0) else LinerMotion.appleDefaultSpring())
                     .clip(LinerShapes.Control)
                     .clickable { bioExpanded = !bioExpanded }
                     .padding(vertical = 2.dp)

@@ -3,11 +3,13 @@ package `fun`.tryliner.android.ui.components
 import android.os.Build
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,7 +18,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.State
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
+import coil3.request.ImageRequest
+import coil3.request.crossfade
 import `fun`.tryliner.android.ui.theme.LinerMotion
+import `fun`.tryliner.android.ui.theme.pressScale
 import `fun`.tryliner.android.ui.theme.rememberReducedMotion
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
@@ -75,28 +87,34 @@ fun AtmosphericBackdrop(
     content: @Composable BoxScope.() -> Unit
 ) {
     val coverAmbient = rememberCoverAmbient(coverUrl)
+    var retainedAmbient by remember { mutableStateOf<CoverAmbientResult?>(null) }
+    if (coverAmbient != null) {
+        retainedAmbient = coverAmbient
+    } else if (coverUrl.isNullOrBlank()) {
+        retainedAmbient = null
+    }
+    val effectiveAmbient = coverAmbient ?: retainedAmbient
     val reducedMotion = rememberReducedMotion()
     val ambientDuration = if (reducedMotion) 0 else LinerMotion.DURATION_AMBIENT
-    val animatedTint by animateColorAsState(
-        targetValue = coverAmbient?.backdropColor ?: tintColor,
+    val animatedTintState = animateColorAsState(
+        targetValue = effectiveAmbient?.backdropColor ?: tintColor,
         animationSpec = LinerMotion.easeOutTween(ambientDuration),
         label = "atmosphericBackdropTint"
     )
     val fullScreenBase = LinerColors.AmbientBase
-    val softTopTint = lerp(LinerColors.AmbientBase, animatedTint, 0.62f)
 
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(fullScreenBase)
     ) {
-        val blurredBitmap = coverAmbient?.blurredBitmap
-        if (blurredBitmap != null) {
-            Crossfade(
-                targetState = blurredBitmap,
-                animationSpec = LinerMotion.easeOutTween(ambientDuration),
-                label = "atmosphericCoverBlur"
-            ) { bitmap ->
+        val blurredBitmap = effectiveAmbient?.blurredBitmap
+        Crossfade(
+            targetState = blurredBitmap,
+            animationSpec = LinerMotion.easeOutTween(ambientDuration),
+            label = "atmosphericCoverBlur"
+        ) { bitmap ->
+            if (bitmap != null) {
                 Image(
                     bitmap = bitmap,
                     contentDescription = null,
@@ -113,6 +131,8 @@ fun AtmosphericBackdrop(
             modifier = Modifier
                 .fillMaxSize()
                 .drawBehind {
+                    val tint = animatedTintState.value
+                    val softTopTint = lerp(LinerColors.AmbientBase, tint, 0.62f)
                     // Desaturated top ambient glow gently dissolving into #0D0F14 across 55% height
                     drawRect(
                         brush = Brush.verticalGradient(
@@ -130,8 +150,8 @@ fun AtmosphericBackdrop(
                     drawRect(
                         brush = Brush.radialGradient(
                             colors = listOf(
-                                animatedTint.copy(alpha = 0.34f),
-                                animatedTint.copy(alpha = 0.10f),
+                                tint.copy(alpha = 0.34f),
+                                tint.copy(alpha = 0.10f),
                                 Color.Transparent
                             ),
                             center = Offset(size.width * 0.24f, size.height * 0.06f),
@@ -143,7 +163,7 @@ fun AtmosphericBackdrop(
                     drawRect(
                         brush = Brush.radialGradient(
                             colors = listOf(
-                                animatedTint.copy(alpha = 0.20f),
+                                tint.copy(alpha = 0.20f),
                                 Color.Transparent
                             ),
                             center = Offset(size.width * 0.86f, size.height * 0.26f),
@@ -180,15 +200,27 @@ fun LinerChip(
     modifier: Modifier = Modifier,
     isSelected: Boolean = false
 ) {
+    val reducedMotion = rememberReducedMotion()
+    val duration = if (reducedMotion) 0 else LinerMotion.DURATION_FAST
+    val bgColor by animateColorAsState(
+        targetValue = if (isSelected) Color.White else Color.White.copy(alpha = 0.08f),
+        animationSpec = LinerMotion.easeOutTween(duration),
+        label = "linerChipBg"
+    )
+    val textColor by animateColorAsState(
+        targetValue = if (isSelected) LinerColors.AmbientBase else LinerColors.TextSecondary,
+        animationSpec = LinerMotion.easeOutTween(duration),
+        label = "linerChipText"
+    )
     Surface(
         modifier = modifier,
         shape = LinerShapes.Pill,
-        color = if (isSelected) Color.White else Color.White.copy(alpha = 0.08f)
+        color = bgColor
     ) {
         Text(
             text = text,
             style = MaterialTheme.typography.bodySmall,
-            color = if (isSelected) LinerColors.AmbientBase else LinerColors.TextSecondary,
+            color = textColor,
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
         )
     }
@@ -204,9 +236,13 @@ fun LinerGlassPillButton(
     contentPadding: PaddingValues = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
     content: @Composable RowScope.() -> Unit
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
     OutlinedButton(
         onClick = onClick,
-        modifier = modifier.heightIn(min = 36.dp),
+        interactionSource = interactionSource,
+        modifier = modifier
+            .heightIn(min = 36.dp)
+            .pressScale(interactionSource, targetScale = 0.96f),
         shape = LinerShapes.Pill,
         border = if (borderColor == Color.Transparent) BorderStroke(0.dp, Color.Transparent) else BorderStroke(0.5.dp, borderColor),
         colors = ButtonDefaults.outlinedButtonColors(
@@ -226,6 +262,9 @@ fun LinerCoverArt(
     modifier: Modifier = Modifier,
     shape: Shape = LinerShapes.Control
 ) {
+    val context = LocalContext.current
+    val reducedMotion = rememberReducedMotion()
+    val fadeDuration = if (reducedMotion) 0 else LinerMotion.DURATION_FAST
     Box(
         modifier = modifier
             .size(size)
@@ -233,17 +272,29 @@ fun LinerCoverArt(
             .background(LinerColors.BgPanel),
         contentAlignment = Alignment.Center
     ) {
-        if (url.isNullOrBlank()) {
-            CoverPlaceholder()
-        } else {
-            SubcomposeAsyncImage(
-                model = url,
-                contentDescription = contentDescription,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-                loading = { CoverPlaceholder() },
-                error = { CoverPlaceholder() }
-            )
+        Crossfade(
+            targetState = url?.takeIf { it.isNotBlank() },
+            animationSpec = LinerMotion.easeOutTween(fadeDuration),
+            label = "linerCoverArtCrossfade"
+        ) { targetUrl ->
+            if (targetUrl == null) {
+                CoverPlaceholder()
+            } else {
+                val request = remember(context, targetUrl, fadeDuration) {
+                    ImageRequest.Builder(context)
+                        .data(targetUrl)
+                        .crossfade(fadeDuration)
+                        .build()
+                }
+                SubcomposeAsyncImage(
+                    model = request,
+                    contentDescription = contentDescription,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                    loading = { CoverPlaceholder() },
+                    error = { CoverPlaceholder() }
+                )
+            }
         }
     }
 }
@@ -291,24 +342,37 @@ fun LikedTracksArtwork(
 }
 
 @Composable
-fun LinerShimmerBox(
-    modifier: Modifier = Modifier,
-    shape: Shape = RoundedCornerShape(8.dp)
-) {
+fun rememberShimmerAlphaState(): State<Float> {
+    val reducedMotion = rememberReducedMotion()
+    if (reducedMotion) {
+        return rememberUpdatedState(0.08f)
+    }
     val transition = rememberInfiniteTransition(label = "shimmer")
-    val alpha by transition.animateFloat(
+    return transition.animateFloat(
         initialValue = 0.05f,
         targetValue = 0.13f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 850),
+            animation = tween(durationMillis = 1050, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "shimmerAlpha"
     )
+}
+
+@Composable
+fun LinerShimmerBox(
+    modifier: Modifier = Modifier,
+    shape: Shape = RoundedCornerShape(8.dp),
+    shimmerAlpha: State<Float>? = null
+) {
+    val alphaState = shimmerAlpha ?: rememberShimmerAlphaState()
     Box(
         modifier = modifier
             .clip(shape)
-            .background(Color.White.copy(alpha = alpha))
+            .graphicsLayer {
+                alpha = alphaState.value
+            }
+            .background(Color.White)
     )
 }
 
@@ -317,6 +381,7 @@ fun TrackListSkeleton(
     count: Int = 7,
     modifier: Modifier = Modifier
 ) {
+    val sharedShimmerAlpha = rememberShimmerAlphaState()
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -330,7 +395,8 @@ fun TrackListSkeleton(
             ) {
                 LinerShimmerBox(
                     modifier = Modifier.size(44.dp),
-                    shape = LinerShapes.Tile
+                    shape = LinerShapes.Tile,
+                    shimmerAlpha = sharedShimmerAlpha
                 )
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(
@@ -340,12 +406,14 @@ fun TrackListSkeleton(
                     LinerShimmerBox(
                         modifier = Modifier
                             .fillMaxWidth(if (idx % 2 == 0) 0.62f else 0.48f)
-                            .height(13.dp)
+                            .height(13.dp),
+                        shimmerAlpha = sharedShimmerAlpha
                     )
                     LinerShimmerBox(
                         modifier = Modifier
                             .fillMaxWidth(if (idx % 2 == 0) 0.38f else 0.52f)
-                            .height(10.dp)
+                            .height(10.dp),
+                        shimmerAlpha = sharedShimmerAlpha
                     )
                 }
             }
@@ -376,4 +444,16 @@ fun formatDurationMs(durationMs: Long): String {
     val minutes = totalSeconds / 60L
     val seconds = totalSeconds % 60L
     return "%d:%02d".format(minutes, seconds)
+}
+
+fun formatTrackCountRu(count: Int): String {
+    val mod100 = count % 100
+    val mod10 = count % 10
+    val word = when {
+        mod100 in 11..19 -> "треков"
+        mod10 == 1 -> "трек"
+        mod10 in 2..4 -> "трека"
+        else -> "треков"
+    }
+    return "$count $word"
 }

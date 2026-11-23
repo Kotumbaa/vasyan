@@ -82,7 +82,7 @@ class LoginViewModel(
         val current = _state.value
         val raw = current.sessionJson.trim()
         if (raw.isEmpty()) {
-            _state.update { it.copy(errorMessage = "Paste session JSON or accessToken first.") }
+            _state.update { it.copy(errorMessage = "Сначала вставьте JSON сессии или accessToken.") }
             return
         }
         if (current.isLoading) return
@@ -99,7 +99,7 @@ class LoginViewModel(
             }.onFailure { error ->
                 val message = when (error) {
                     is ApiError -> error.message
-                    else -> error.message ?: "Failed to import session."
+                    else -> error.message ?: "Не удалось импортировать сессию."
                 }
                 _state.update { it.copy(isLoading = false, errorMessage = message) }
             }

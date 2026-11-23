@@ -1,5 +1,6 @@
 package `fun`.tryliner.android.core.lyrics
 
+import `fun`.tryliner.android.core.model.LyricsStreamEvent
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -48,8 +49,8 @@ class SseEventParserTest {
 
         val found = events[1] as LyricsStreamEvent.ProviderFound
         assertEquals("musixmatch", found.provider)
-        assertEquals(LyricsSyncLevel.WORD_LEVEL, found.syncLevel)
-        assertEquals(LyricsFormat.LRC, found.candidate.lyrics.format)
+        assertEquals("word_level", found.syncLevel)
+        assertEquals("lrc", found.candidate.lyrics.format)
         assertEquals("[00:01.00]Hi", found.candidate.lyrics.content)
 
         val done = events[2] as LyricsStreamEvent.Done

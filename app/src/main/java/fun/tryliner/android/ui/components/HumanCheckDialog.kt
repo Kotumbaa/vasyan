@@ -30,6 +30,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -74,6 +75,20 @@ fun HumanCheckDialog(
     var detectedClearance by remember(request, attempt) { mutableStateOf<String?>(null) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
+    val safeAction = remember(request.action) {
+        request.action.replace(Regex("[^a-zA-Z0-9_-]"), "")
+    }
+
+    LaunchedEffect(webViewRef, safeAction, attempt) {
+        val webView = webViewRef ?: return@LaunchedEffect
+        val tag = "$safeAction:$attempt"
+        if (webView.tag != tag) {
+            webView.tag = tag
+            isLoading = true
+            statusError = null
+            webView.loadUrl("$normalizedBaseUrl/v1/auth/verify?action=$safeAction")
+        }
+    }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -102,13 +117,13 @@ fun HumanCheckDialog(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    text = "Security Verification",
+                    text = "Проверка безопасности",
                     style = MaterialTheme.typography.titleLarge,
                     color = LinerColors.TextPrimary
                 )
 
                 Text(
-                    text = "Complete the check below to continue.",
+                    text = "Пройдите проверку ниже, чтобы продолжить.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = LinerColors.TextSecondary
                 )
@@ -158,7 +173,7 @@ fun HumanCheckDialog(
                                             isLoading = false
                                             statusError = error?.description?.toString()
                                                 ?.takeIf { it.isNotBlank() }
-                                                ?: "Failed to load verification page."
+                                                ?: "Не удалось загрузить страницу проверки."
                                         }
                                     }
 
@@ -169,7 +184,7 @@ fun HumanCheckDialog(
                                     ) {
                                         val code = errorResponse?.statusCode ?: return
                                         if (request?.isForMainFrame == true && code != 403) {
-                                            statusError = "Verification page returned HTTP $code."
+                                            statusError = "Страница проверки вернула HTTP $code."
                                         }
                                     }
                                 }
@@ -191,10 +206,10 @@ fun HumanCheckDialog(
                                                         )
                                                     }
                                                     "expired" -> {
-                                                        statusError = "Verification expired. Please retry."
+                                                        statusError = "Срок проверки истёк. Повторите попытку."
                                                     }
                                                     "error" -> {
-                                                        statusError = "Verification error. Please retry."
+                                                        statusError = "Ошибка проверки. Повторите попытку."
                                                     }
                                                 }
                                             }
@@ -204,16 +219,6 @@ fun HumanCheckDialog(
                                 )
 
                                 webViewRef = this
-                            }
-                        },
-                        update = { webView ->
-                            val safeAction = request.action.replace(Regex("[^a-zA-Z0-9_-]"), "")
-                            val tag = "$safeAction:$attempt"
-                            if (webView.tag != tag) {
-                                webView.tag = tag
-                                isLoading = true
-                                statusError = null
-                                webView.loadUrl("$normalizedBaseUrl/v1/auth/verify?action=$safeAction")
                             }
                         },
                         modifier = Modifier.fillMaxSize()
@@ -253,16 +258,16 @@ fun HumanCheckDialog(
                             ),
                             shape = LinerShapes.Control
                         ) {
-                            Text("Continue")
+                            Text("Продолжить")
                         }
                         Spacer(modifier = Modifier.weight(1f))
                     }
 
                     TextButton(onClick = { attempt++ }) {
-                        Text("Retry", color = LinerColors.TextSecondary)
+                        Text("Повторить", color = LinerColors.TextSecondary)
                     }
                     TextButton(onClick = onCancel) {
-                        Text("Cancel", color = LinerColors.AccentPrimary)
+                        Text("Отмена", color = LinerColors.AccentPrimary)
                     }
                 }
             }

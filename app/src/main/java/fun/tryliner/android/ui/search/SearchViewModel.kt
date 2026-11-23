@@ -132,7 +132,7 @@ class SearchViewModel(
             _state.update {
                 it.copy(
                     isLoading = false,
-                    errorMessage = error.message ?: "Search failed"
+                    errorMessage = error.message ?: "Ошибка поиска"
                 )
             }
         }

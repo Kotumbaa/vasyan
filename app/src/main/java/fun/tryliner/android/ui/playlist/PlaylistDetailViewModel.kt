@@ -9,6 +9,7 @@ import `fun`.tryliner.android.core.model.SearchResult
 import `fun`.tryliner.android.core.model.Track
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -49,10 +50,10 @@ class PlaylistDetailViewModel(
     private val _state = MutableStateFlow(
         PlaylistDetailUiState(
             title = when {
-                playlistId == LIKED_PLAYLIST_ID -> "Liked Tracks"
-                playlistId.startsWith(ALBUM_PLAYLIST_PREFIX) -> "Album"
-                playlistId.startsWith(DAILY_MIX_PREFIX) -> "Daily Mix"
-                else -> "Playlist"
+                playlistId == LIKED_PLAYLIST_ID -> "Понравившиеся"
+                playlistId.startsWith(ALBUM_PLAYLIST_PREFIX) -> "Альбом"
+                playlistId.startsWith(DAILY_MIX_PREFIX) -> "Микс дня"
+                else -> "Плейлист"
             },
             isLikedCollection = playlistId == LIKED_PLAYLIST_ID
         )
@@ -62,14 +63,17 @@ class PlaylistDetailViewModel(
     private val _importState = MutableStateFlow(ImportLikedState())
     val importState: StateFlow<ImportLikedState> = _importState.asStateFlow()
 
+    private var loadJob: Job? = null
+
     init {
         load()
     }
 
     fun load() {
+        loadJob?.cancel()
         _state.update { it.copy(isLoading = true, errorMessage = null) }
 
-        viewModelScope.launch {
+        loadJob = viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
                     when {
@@ -138,7 +142,7 @@ class PlaylistDetailViewModel(
                                 ?: container.apiClient.getDailyMixes().items
                                     .also { container.cacheDailyMixes(it) }
                                     .firstOrNull { it.id == mixId }
-                                ?: error("Mix not found")
+                                ?: error("Микс не найден")
                             container.seedLikedTrackIds(mix.tracks)
                             PlaylistDetailUiState(
                                 title = mix.title,
@@ -175,7 +179,7 @@ class PlaylistDetailViewModel(
                 _state.update {
                     it.copy(
                         isLoading = false,
-                        errorMessage = error.message ?: "Failed to load tracks"
+                        errorMessage = error.message ?: "Не удалось загрузить треки"
                     )
                 }
             }
@@ -222,7 +226,7 @@ class PlaylistDetailViewModel(
                     if (singleSpotifyUrl != null) {
                         val spotify = container.apiClient.importSpotify(singleSpotifyUrl)
                         val spTracks = spotify.tracks
-                        if (spTracks.isEmpty()) error("Spotify playlist is empty or private")
+                        if (spTracks.isEmpty()) error("Плейлист Spotify пуст или закрыт")
                         _importState.update { it.copy(total = spTracks.size) }
                         var imported = 0
                         spTracks.forEachIndexed { idx, spTrack ->
@@ -242,7 +246,7 @@ class PlaylistDetailViewModel(
                     } else if (singlePlaylistId != null) {
                         val playlist = container.apiClient.getCatalogPlaylist(singlePlaylistId)
                         val tracks = playlist.tracks
-                        if (tracks.isEmpty()) error("Playlist is empty or unavailable")
+                        if (tracks.isEmpty()) error("Плейлист пуст или недоступен")
                         _importState.update { it.copy(total = tracks.size) }
                         var imported = 0
                         tracks.forEachIndexed { idx, track ->
@@ -279,7 +283,7 @@ class PlaylistDetailViewModel(
                 _importState.update {
                     it.copy(
                         isImporting = false,
-                        error = e.message ?: "Import failed"
+                        error = e.message ?: "Ошибка импорта"
                     )
                 }
             }

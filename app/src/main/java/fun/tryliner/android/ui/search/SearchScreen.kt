@@ -1,7 +1,15 @@
 package `fun`.tryliner.android.ui.search
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.WindowInsets
@@ -65,6 +74,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import `fun`.tryliner.android.AppContainer
@@ -72,8 +82,22 @@ import `fun`.tryliner.android.R
 import `fun`.tryliner.android.ui.components.LinerCoverArt
 import `fun`.tryliner.android.ui.components.LinerPanel
 import `fun`.tryliner.android.ui.components.TrackRow
+import `fun`.tryliner.android.ui.components.formatTrackCountRu
 import `fun`.tryliner.android.ui.theme.LinerColors
+import `fun`.tryliner.android.ui.theme.LinerMotion
 import `fun`.tryliner.android.ui.theme.LinerShapes
+import `fun`.tryliner.android.ui.theme.pressScale
+import `fun`.tryliner.android.ui.theme.rememberReducedMotion
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+
+private enum class SearchContentPhase {
+    LOADING,
+    ERROR,
+    BLANK,
+    EMPTY,
+    RESULTS
+}
 
 private enum class SearchFilter(val label: String) {
     ALL("Все"),
@@ -109,8 +133,19 @@ fun SearchScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val likedIds by container.likedTrackIds.collectAsStateWithLifecycle()
-    val playbackState by container.playerController.state.collectAsStateWithLifecycle()
+    val currentPlayingTrackId by remember(container) {
+        container.playerController.state.map { it.currentTrack?.id }.distinctUntilChanged()
+    }.collectAsStateWithLifecycle(initialValue = container.playerController.state.value.currentTrack?.id)
     var selectedFilter by rememberSaveable { mutableStateOf(SearchFilter.ALL) }
+    val reducedMotion = rememberReducedMotion()
+    val trackKeys = remember(state.tracks) {
+        val counts = HashMap<String, Int>(state.tracks.size)
+        state.tracks.map { track ->
+            val occ = counts.getOrDefault(track.id, 0)
+            counts[track.id] = occ + 1
+            if (occ == 0) "track_${track.id}" else "track_${track.id}_dup$occ"
+        }
+    }
 
     val derivedArtists = remember(state.tracks) {
         state.tracks
@@ -137,7 +172,7 @@ fun SearchScreen(
                 val first = group.first()
                 DerivedAlbumResult(
                     title = title,
-                    artistName = first.value.artistNames.ifBlank { "Unknown Artist" },
+                    artistName = first.value.artistNames.ifBlank { "Неизвестный артист" },
                     coverUrl = first.value.cover?.url ?: first.value.cover?.fallbackUrl,
                     trackCount = group.size,
                     firstTrackIndex = first.index
@@ -156,178 +191,194 @@ fun SearchScreen(
         statusBarTop + 178.dp
     }
 
+    val contentPhase = when {
+        state.isLoading -> SearchContentPhase.LOADING
+        state.errorMessage != null -> SearchContentPhase.ERROR
+        state.query.isBlank() -> SearchContentPhase.BLANK
+        state.tracks.isEmpty() &&
+            state.artists.isEmpty() &&
+            state.albums.isEmpty() &&
+            state.playlists.isEmpty() -> SearchContentPhase.EMPTY
+        else -> SearchContentPhase.RESULTS
+    }
+    val fastDuration = if (reducedMotion) 0 else LinerMotion.DURATION_FAST
+    val normalDuration = if (reducedMotion) 0 else LinerMotion.DURATION_NORMAL
+
     Box(modifier = Modifier.fillMaxSize()) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .hazeSource(state = headerHazeState)
+                .imePadding()
         ) {
-            when {
-                state.isLoading -> {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(top = topBarHeightDp + 10.dp)
-                    ) {
-                        TrackListSkeleton(count = 7)
-                    }
-                }
-            state.errorMessage != null -> {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 16.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    LinerPanel(
-                        shape = LinerShapes.Panel,
-                        containerColor = Color.White.copy(alpha = 0.07f),
-                        borderColor = Color.Transparent
-                    ) {
-                        Text(
-                            text = state.errorMessage.orEmpty(),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = LinerColors.TextSecondary,
-                            modifier = Modifier.padding(20.dp)
-                        )
-                    }
-                }
-            }
-            state.query.isBlank() -> {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Surface(
-                            shape = CircleShape,
-                            color = Color.White.copy(alpha = 0.08f),
-                            modifier = Modifier.size(56.dp)
+            Crossfade(
+                targetState = contentPhase,
+                animationSpec = LinerMotion.easeOutTween(normalDuration),
+                label = "searchContentPhase"
+            ) { phase ->
+                when (phase) {
+                    SearchContentPhase.LOADING -> {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(top = topBarHeightDp + 10.dp)
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Search,
-                                    contentDescription = null,
-                                    tint = LinerColors.TextTertiary,
-                                    modifier = Modifier.size(26.dp)
-                                )
-                            }
+                            TrackListSkeleton(count = 7)
                         }
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = "Найдите треки, артистов или альбомы",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = LinerColors.TextTertiary
-                        )
                     }
-                }
-            }
-            state.tracks.isEmpty() &&
-                state.artists.isEmpty() &&
-                state.albums.isEmpty() &&
-                state.playlists.isEmpty() -> {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(
-                        text = "Ничего не найдено",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = LinerColors.TextTertiary
-                    )
-                }
-            }
-            else -> {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(
-                        top = topBarHeightDp + 6.dp,
-                        bottom = (bottomContentPadding.calculateBottomPadding() + 24.dp).coerceAtLeast(148.dp)
-                    ),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    when (selectedFilter) {
-                        SearchFilter.ALL -> {
-                            if (state.artists.isNotEmpty()) {
-                                item(key = "all_artists_header") {
-                                    Text(
-                                        text = "Артисты",
-                                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                                        color = LinerColors.TextSecondary,
-                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
-                                    )
-                                }
-                                items(state.artists.take(3), key = { "all_artist_${it.id}" }) { artist ->
-                                    EntityResultRow(
-                                        title = artist.name,
-                                        subtitle = "Артист",
-                                        coverUrl = artist.cover?.url ?: artist.cover?.fallbackUrl,
-                                        isCircularCover = true,
-                                        onClick = { onOpenArtist(artist.id) }
-                                    )
-                                }
-                            }
-                            if (state.albums.isNotEmpty()) {
-                                item(key = "all_albums_header") {
-                                    Text(
-                                        text = "Альбомы",
-                                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                                        color = LinerColors.TextSecondary,
-                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
-                                    )
-                                }
-                                items(state.albums.take(3), key = { "all_album_${it.id}" }) { album ->
-                                    val artistText = album.artists.joinToString(", ") { it.name }.ifBlank { "Album" }
-                                    EntityResultRow(
-                                        title = album.title,
-                                        subtitle = listOfNotNull(artistText, album.year?.toString()).joinToString(" · "),
-                                        coverUrl = album.cover?.url ?: album.cover?.fallbackUrl,
-                                        isCircularCover = false,
-                                        onClick = { onOpenAlbum(album.id) }
-                                    )
-                                }
-                            }
-                            if (state.tracks.isNotEmpty()) {
-                                item(key = "tracks_header") {
-                                    Text(
-                                        text = "Треки",
-                                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                                        color = LinerColors.TextSecondary,
-                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
-                                    )
-                                }
-                                itemsIndexed(
-                                    items = state.tracks,
-                                    key = { index, track -> "${track.id}_$index" }
-                                ) { index, track ->
-                                    TrackRow(
-                                        track = track,
-                                        isLiked = likedIds.contains(track.id),
-                                        isPlayingCurrent = playbackState.currentTrack?.id == track.id,
-                                        onClick = { viewModel.playTrackAt(index) },
-                                        onToggleLike = { viewModel.toggleLike(track) },
-                                        modifier = Modifier.padding(horizontal = 4.dp)
-                                    )
-                                }
-                            }
-                        }
-                        SearchFilter.TRACKS -> {
-                            item(key = "tracks_header") {
+                    SearchContentPhase.ERROR -> {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 16.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            LinerPanel(
+                                shape = LinerShapes.Panel,
+                                containerColor = Color.White.copy(alpha = 0.07f),
+                                borderColor = Color.Transparent
+                            ) {
                                 Text(
-                                    text = "Треки",
-                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                                    text = state.errorMessage.orEmpty(),
+                                    style = MaterialTheme.typography.bodyMedium,
                                     color = LinerColors.TextSecondary,
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
-                                )
-                            }
-                            itemsIndexed(
-                                items = state.tracks,
-                                key = { index, track -> "${track.id}_$index" }
-                            ) { index, track ->
-                                TrackRow(
-                                    track = track,
-                                    isLiked = likedIds.contains(track.id),
-                                    isPlayingCurrent = playbackState.currentTrack?.id == track.id,
-                                    onClick = { viewModel.playTrackAt(index) },
-                                    onToggleLike = { viewModel.toggleLike(track) },
-                                    modifier = Modifier.padding(horizontal = 4.dp)
+                                    modifier = Modifier.padding(20.dp)
                                 )
                             }
                         }
+                    }
+                    SearchContentPhase.BLANK -> {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = Color.White.copy(alpha = 0.08f),
+                                    modifier = Modifier.size(56.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            painter = painterResource(R.drawable.ic_mgc_search_line),
+                                            contentDescription = null,
+                                            tint = LinerColors.TextTertiary,
+                                            modifier = Modifier.size(26.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text(
+                                    text = "Найдите треки, артистов или альбомы",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = LinerColors.TextTertiary
+                                )
+                            }
+                        }
+                    }
+                    SearchContentPhase.EMPTY -> {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text(
+                                text = "Ничего не найдено",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = LinerColors.TextTertiary
+                            )
+                        }
+                    }
+                    SearchContentPhase.RESULTS -> {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(
+                                top = topBarHeightDp + 6.dp,
+                                bottom = (bottomContentPadding.calculateBottomPadding() + 24.dp).coerceAtLeast(148.dp)
+                            ),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            when (selectedFilter) {
+                                SearchFilter.ALL -> {
+                                    if (state.artists.isNotEmpty()) {
+                                        item(key = "all_artists_header") {
+                                            Text(
+                                                text = "Артисты",
+                                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                                                color = LinerColors.TextSecondary,
+                                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                                            )
+                                        }
+                                        items(state.artists.take(3), key = { "all_artist_${it.id}" }) { artist ->
+                                            EntityResultRow(
+                                                title = artist.name,
+                                                subtitle = "Артист",
+                                                coverUrl = artist.cover?.url ?: artist.cover?.fallbackUrl,
+                                                isCircularCover = true,
+                                                onClick = { onOpenArtist(artist.id) }
+                                            )
+                                        }
+                                    }
+                                    if (state.albums.isNotEmpty()) {
+                                        item(key = "all_albums_header") {
+                                            Text(
+                                                text = "Альбомы",
+                                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                                                color = LinerColors.TextSecondary,
+                                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                                            )
+                                        }
+                                        items(state.albums.take(3), key = { "all_album_${it.id}" }) { album ->
+                                            val artistText = album.artists.joinToString(", ") { it.name }.ifBlank { "Альбом" }
+                                            EntityResultRow(
+                                                title = album.title,
+                                                subtitle = listOfNotNull(artistText, album.year?.toString()).joinToString(" · "),
+                                                coverUrl = album.cover?.url ?: album.cover?.fallbackUrl,
+                                                isCircularCover = false,
+                                                onClick = { onOpenAlbum(album.id) }
+                                            )
+                                        }
+                                    }
+                                    if (state.tracks.isNotEmpty()) {
+                                        item(key = "tracks_header") {
+                                            Text(
+                                                text = "Треки",
+                                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                                                color = LinerColors.TextSecondary,
+                                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                                            )
+                                        }
+                                        itemsIndexed(
+                                            items = state.tracks,
+                                            key = { index, _ -> trackKeys.getOrElse(index) { "track_$index" } }
+                                        ) { index, track ->
+                                            TrackRow(
+                                                track = track,
+                                                isLiked = likedIds.contains(track.id),
+                                                isPlayingCurrent = currentPlayingTrackId == track.id,
+                                                onClick = { viewModel.playTrackAt(index) },
+                                                onToggleLike = { viewModel.toggleLike(track) },
+                                                modifier = Modifier.padding(horizontal = 4.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                                SearchFilter.TRACKS -> {
+                                    item(key = "tracks_header") {
+                                        Text(
+                                            text = "Треки",
+                                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                                            color = LinerColors.TextSecondary,
+                                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                                        )
+                                    }
+                                    itemsIndexed(
+                                        items = state.tracks,
+                                        key = { index, _ -> trackKeys.getOrElse(index) { "track_$index" } }
+                                    ) { index, track ->
+                                        TrackRow(
+                                            track = track,
+                                            isLiked = likedIds.contains(track.id),
+                                            isPlayingCurrent = currentPlayingTrackId == track.id,
+                                            onClick = { viewModel.playTrackAt(index) },
+                                            onToggleLike = { viewModel.toggleLike(track) },
+                                            modifier = Modifier.padding(horizontal = 4.dp)
+                                        )
+                                    }
+                                }
                         SearchFilter.ARTISTS -> {
                             if (state.artists.isNotEmpty()) {
                                 items(state.artists, key = { "artist_${it.id}" }) { artist ->
@@ -343,14 +394,14 @@ fun SearchScreen(
                                 item(key = "artists_empty") {
                                     EmptyFilterState(
                                         icon = Icons.Rounded.Person,
-                                        message = "No artists in results"
+                                        message = "Артисты не найдены"
                                     )
                                 }
                             } else {
                                 items(derivedArtists, key = { it.name }) { artist ->
                                     EntityResultRow(
                                         title = artist.name,
-                                        subtitle = "${artist.trackCount} ${if (artist.trackCount == 1) "track" else "tracks"}",
+                                        subtitle = formatTrackCountRu(artist.trackCount),
                                         coverUrl = artist.coverUrl,
                                         isCircularCover = true,
                                         onClick = { viewModel.playTrackAt(artist.firstTrackIndex) }
@@ -361,7 +412,7 @@ fun SearchScreen(
                         SearchFilter.ALBUMS -> {
                             if (state.albums.isNotEmpty()) {
                                 items(state.albums, key = { "album_${it.id}" }) { album ->
-                                    val artistText = album.artists.joinToString(", ") { it.name }.ifBlank { "Album" }
+                                    val artistText = album.artists.joinToString(", ") { it.name }.ifBlank { "Альбом" }
                                     EntityResultRow(
                                         title = album.title,
                                         subtitle = listOfNotNull(artistText, album.year?.toString()).joinToString(" · "),
@@ -374,7 +425,7 @@ fun SearchScreen(
                                 item(key = "albums_empty") {
                                     EmptyFilterState(
                                         icon = Icons.Rounded.Album,
-                                        message = "No albums in results"
+                                        message = "Альбомы не найдены"
                                     )
                                 }
                             } else {
@@ -394,7 +445,7 @@ fun SearchScreen(
                                 items(state.playlists, key = { "playlist_${it.id}" }) { playlist ->
                                     EntityResultRow(
                                         title = playlist.title,
-                                        subtitle = playlist.author ?: "Playlist",
+                                        subtitle = playlist.author ?: "Плейлист",
                                         coverUrl = playlist.cover?.url ?: playlist.cover?.fallbackUrl,
                                         isCircularCover = false,
                                         onClick = { onOpenCatalogPlaylist(playlist.id) }
@@ -404,7 +455,7 @@ fun SearchScreen(
                                 item(key = "playlists_empty") {
                                     EmptyFilterState(
                                         icon = Icons.AutoMirrored.Rounded.QueueMusic,
-                                        message = "No playlists for \"${state.query.trim()}\""
+                                        message = "Плейлисты по запросу «${state.query.trim()}» не найдены"
                                     )
                                 }
                             }
@@ -412,7 +463,8 @@ fun SearchScreen(
                     }
                 }
             }
-        }
+            }
+            }
         }
 
         // Frosted-glass translucent + backdrop blur top bar (lighter glass tint)
@@ -463,11 +515,26 @@ fun SearchScreen(
                 ) {
                     SearchCatalogSource.entries.forEach { src ->
                         val active = state.source == src
+                        val srcInteraction = remember(src) { MutableInteractionSource() }
+                        val pillBg by animateColorAsState(
+                            targetValue = if (active) Color.White else Color.Transparent,
+                            animationSpec = LinerMotion.easeOutTween(fastDuration),
+                            label = "searchSourceBg"
+                        )
+                        val pillText by animateColorAsState(
+                            targetValue = if (active) Color(0xFF0D0F14) else LinerColors.TextSecondary,
+                            animationSpec = LinerMotion.easeOutTween(fastDuration),
+                            label = "searchSourceText"
+                        )
                         Box(
                             modifier = Modifier
+                                .pressScale(srcInteraction, targetScale = 0.95f)
                                 .clip(CircleShape)
-                                .background(if (active) Color.White else Color.Transparent)
-                                .clickable { viewModel.onSourceChange(src) }
+                                .background(pillBg)
+                                .clickable(
+                                    interactionSource = srcInteraction,
+                                    indication = null
+                                ) { viewModel.onSourceChange(src) }
                                 .padding(horizontal = 12.dp, vertical = 5.dp),
                             contentAlignment = Alignment.Center
                         ) {
@@ -476,7 +543,7 @@ fun SearchScreen(
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontWeight = FontWeight.SemiBold
                                 ),
-                                color = if (active) Color(0xFF0A0A0D) else LinerColors.TextSecondary
+                                color = pillText
                             )
                         }
                     }
@@ -503,7 +570,13 @@ fun SearchScreen(
                     )
                 },
                 trailingIcon = {
-                    if (state.query.isNotEmpty()) {
+                    AnimatedVisibility(
+                        visible = state.query.isNotEmpty(),
+                        enter = fadeIn(LinerMotion.easeOutTween(fastDuration)) +
+                            scaleIn(LinerMotion.easeOutTween(fastDuration), initialScale = 0.85f),
+                        exit = fadeOut(LinerMotion.easeOutTween(fastDuration)) +
+                            scaleOut(LinerMotion.easeOutTween(fastDuration), targetScale = 0.85f)
+                    ) {
                         IconButton(onClick = viewModel::clearQuery) {
                             Icon(
                                 painter = painterResource(R.drawable.ic_mgc_close_line),
@@ -515,7 +588,7 @@ fun SearchScreen(
                     }
                 },
                 singleLine = true,
-                shape = CircleShape,
+                shape = LinerShapes.Item,
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = Color.Transparent,
                     unfocusedBorderColor = Color.Transparent,
@@ -539,17 +612,30 @@ fun SearchScreen(
             ) {
                 items(SearchFilter.entries) { filter ->
                     val isSelected = selectedFilter == filter
+                    val filterInteraction = remember(filter) { MutableInteractionSource() }
+                    val chipBg by animateColorAsState(
+                        targetValue = if (isSelected) Color(0xFFFFFFFF) else Color.White.copy(alpha = 0.08f),
+                        animationSpec = LinerMotion.easeOutTween(fastDuration),
+                        label = "searchFilterBg"
+                    )
+                    val chipText by animateColorAsState(
+                        targetValue = if (isSelected) Color(0xFF0D0F14) else Color.White.copy(alpha = 0.65f),
+                        animationSpec = LinerMotion.easeOutTween(fastDuration),
+                        label = "searchFilterText"
+                    )
                     Surface(
                         onClick = { selectedFilter = filter },
-                        shape = CircleShape,
-                        color = if (isSelected) Color(0xFFFFFFFF) else Color.White.copy(alpha = 0.08f)
+                        interactionSource = filterInteraction,
+                        shape = LinerShapes.Control,
+                        color = chipBg,
+                        modifier = Modifier.pressScale(filterInteraction, targetScale = 0.95f)
                     ) {
                         Text(
                             text = filter.label,
                             style = MaterialTheme.typography.labelLarge.copy(
                                 fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium
                             ),
-                            color = if (isSelected) Color(0xFF0D0F14) else Color.White.copy(alpha = 0.65f),
+                            color = chipText,
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
                         )
                     }
@@ -567,12 +653,18 @@ private fun EntityResultRow(
     isCircularCover: Boolean,
     onClick: () -> Unit
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 4.dp)
+            .pressScale(interactionSource, targetScale = 0.98f)
             .clip(LinerShapes.Item)
-            .clickable(onClick = onClick)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick
+            )
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

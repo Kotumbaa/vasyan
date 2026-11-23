@@ -5,6 +5,7 @@ import android.net.Uri
 import android.util.Log
 import `fun`.tryliner.android.core.model.Track
 import `fun`.tryliner.android.core.network.InnertubeClient
+import `fun`.tryliner.android.core.network.LinerApiClient
 import java.io.File
 import java.io.IOException
 import java.io.RandomAccessFile
@@ -52,6 +53,7 @@ sealed interface TrackDownloadState {
 class TrackDownloadManager(
     context: Context,
     private val innertubeClient: InnertubeClient,
+    private val apiClient: LinerApiClient,
     private val scope: CoroutineScope,
 ) {
     private val downloadsDir = File(context.filesDir, "downloads").apply { mkdirs() }
@@ -147,6 +149,30 @@ class TrackDownloadManager(
         jobs[track.id] = job
     }
 
+    private data class DownloadTarget(
+        val url: String,
+        val contentLength: Long? = null,
+        val isHls: Boolean = false,
+    )
+
+    private suspend fun resolveStreamForDownload(track: Track): DownloadTarget {
+        if (track.id.startsWith("sp:", ignoreCase = true) ||
+            track.id.startsWith("sc:", ignoreCase = true)
+        ) {
+            val relay = apiClient.resolveStream(track.id, track.title, track.artistNames)
+            return DownloadTarget(url = relay.url, isHls = relay.isHls)
+        }
+        return try {
+            val direct = innertubeClient.resolveAudioStream(track.id)
+            DownloadTarget(url = direct.url, contentLength = direct.contentLength, isHls = false)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            val relay = apiClient.resolveStream(track.id, track.title, track.artistNames)
+            DownloadTarget(url = relay.url, isHls = relay.isHls)
+        }
+    }
+
     private suspend fun downloadWithRetries(track: Track, part: File) {
         var lastError: Throwable? = null
         for (attempt in 1..MAX_TRACK_ATTEMPTS) {
@@ -156,19 +182,25 @@ class TrackDownloadManager(
                 delay(700L * attempt)
             }
             try {
-                val stream = innertubeClient.resolveAudioStream(track.id)
+                val stream = resolveStreamForDownload(track)
                 part.delete()
-                try {
-                    downloadChunked(stream.url, stream.contentLength, part) { progress ->
+                if (stream.isHls) {
+                    downloadHls(stream.url, part) { progress ->
                         setState(track.id, TrackDownloadState.Downloading(progress))
                     }
-                } catch (chunkErr: IOException) {
-                    if (chunkErr is CancellationException) throw chunkErr
-                    Log.w(TAG, "Chunked download failed for ${track.id} (attempt $attempt), trying plain GET: ${chunkErr.message}")
-                    part.delete()
-                    setState(track.id, TrackDownloadState.Downloading(0f))
-                    downloadPlain(stream.url, part) { progress ->
-                        setState(track.id, TrackDownloadState.Downloading(progress))
+                } else {
+                    try {
+                        downloadChunked(stream.url, stream.contentLength, part) { progress ->
+                            setState(track.id, TrackDownloadState.Downloading(progress))
+                        }
+                    } catch (chunkErr: IOException) {
+                        if (chunkErr is CancellationException) throw chunkErr
+                        Log.w(TAG, "Chunked download failed for ${track.id} (attempt $attempt), trying plain GET: ${chunkErr.message}")
+                        part.delete()
+                        setState(track.id, TrackDownloadState.Downloading(0f))
+                        downloadPlain(stream.url, part) { progress ->
+                            setState(track.id, TrackDownloadState.Downloading(progress))
+                        }
                     }
                 }
                 return
@@ -190,12 +222,14 @@ class TrackDownloadManager(
     fun delete(trackId: String) {
         cancel(trackId)
         scope.launch(Dispatchers.IO) {
-            audioFile(trackId).delete()
-            partFile(trackId).delete()
-            indexMutex.withLock {
-                val updated = _downloadedTracks.value.filterNot { it.id == trackId }
-                indexFile.writeText(json.encodeToString(indexSerializer, updated))
-                _downloadedTracks.value = updated
+            downloadSemaphore.withPermit {
+                audioFile(trackId).delete()
+                partFile(trackId).delete()
+                indexMutex.withLock {
+                    val updated = _downloadedTracks.value.filterNot { it.id == trackId }
+                    indexFile.writeText(json.encodeToString(indexSerializer, updated))
+                    _downloadedTracks.value = updated
+                }
             }
         }
     }
@@ -227,17 +261,27 @@ class TrackDownloadManager(
 
         var total = knownLength?.takeIf { it > 0 }
             ?: httpUrl.queryParameter("clen")?.toLongOrNull()?.takeIf { it > 0 }
+        var firstChunkSize = 0L
         if (total == null) {
             // Probe first chunk to learn total length from Content-Range.
             val (bytes, probedTotal) = fetchRange(httpUrl, 0, CHUNK_SIZE - 1)
             total = probedTotal ?: throw IOException("Unknown content length")
             RandomAccessFile(target, "rw").use { it.write(bytes) }
+            firstChunkSize = bytes.size.toLong()
         }
         val totalLength = total
 
         RandomAccessFile(target, "rw").use { it.setLength(totalLength) }
-        val done = AtomicLong(0)
-        val starts = (0 until totalLength step CHUNK_SIZE).toList()
+        val done = AtomicLong(firstChunkSize)
+        if (firstChunkSize > 0L) {
+            onProgress((firstChunkSize.toFloat() / totalLength).coerceIn(0f, 1f))
+        }
+        val firstRemainingStart = if (firstChunkSize > 0L) CHUNK_SIZE else 0L
+        val starts = if (firstRemainingStart < totalLength) {
+            (firstRemainingStart until totalLength step CHUNK_SIZE).toList()
+        } else {
+            emptyList()
+        }
 
         coroutineScope {
             starts.chunked(CONCURRENCY).forEach { batch ->
@@ -257,6 +301,59 @@ class TrackDownloadManager(
                     }
                 }.awaitAll()
             }
+        }
+    }
+
+    private suspend fun downloadHls(url: String, target: File, onProgress: (Float) -> Unit) =
+        withContext(Dispatchers.IO) {
+            val baseHttpUrl = url.toHttpUrlOrNull() ?: throw IOException("Invalid HLS URL")
+            val playlistText = executeCancellableString(url)
+            val lines = playlistText.lineSequence()
+                .map { it.trim() }
+                .filter { it.isNotEmpty() && !it.startsWith("#") }
+                .toList()
+            if (lines.isEmpty()) throw IOException("Empty HLS playlist")
+
+            val firstResolved = baseHttpUrl.resolve(lines.first())
+                ?: throw IOException("Invalid HLS entry URL")
+            val segmentUrls = if (lines.any { it.contains(".m3u8", ignoreCase = true) }) {
+                val subText = executeCancellableString(firstResolved.toString())
+                subText.lineSequence()
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() && !it.startsWith("#") }
+                    .mapNotNull { firstResolved.resolve(it)?.toString() }
+                    .toList()
+            } else {
+                lines.mapNotNull { baseHttpUrl.resolve(it)?.toString() }
+            }
+            if (segmentUrls.isEmpty()) throw IOException("No HLS segments found")
+
+            target.outputStream().use { output ->
+                segmentUrls.forEachIndexed { index, segUrl ->
+                    coroutineContext.ensureActive()
+                    val bytes = retry(3) { executeCancellableBytes(segUrl) }
+                    output.write(bytes)
+                    onProgress(((index + 1).toFloat() / segmentUrls.size).coerceIn(0f, 1f))
+                }
+            }
+        }
+
+    private suspend fun executeCancellableString(url: String): String =
+        executeCancellableBytes(url).toString(Charsets.UTF_8)
+
+    private suspend fun executeCancellableBytes(url: String): ByteArray {
+        val request = Request.Builder().url(url).get().build()
+        val call = httpClient.newCall(request)
+        val cancelHandle = coroutineContext[Job]?.invokeOnCompletion {
+            if (it is CancellationException) call.cancel()
+        }
+        try {
+            call.execute().use { response ->
+                if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+                return response.body?.bytes() ?: ByteArray(0)
+            }
+        } finally {
+            cancelHandle?.dispose()
         }
     }
 

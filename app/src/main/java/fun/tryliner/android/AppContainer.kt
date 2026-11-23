@@ -45,6 +45,8 @@ class AppContainer(context: Context) {
         sessionStorage = sessionStorage,
         signer = signer,
         baseUrl = apiBaseUrl,
+        clientVersion = "${BuildConfig.VERSION_NAME}-android",
+        platform = "android",
         userAgent = userAgent,
         humanCheckProvider = HumanCheckProvider { request ->
             requestHumanCheck(request)
@@ -55,6 +57,7 @@ class AppContainer(context: Context) {
     val downloadManager = TrackDownloadManager(
         context = appContext,
         innertubeClient = innertubeClient,
+        apiClient = apiClient,
         scope = appScope
     )
 

@@ -31,6 +31,7 @@ class LinerPlaybackService : MediaSessionService() {
 
     private var mediaSession: MediaSession? = null
     private var audioCache: SimpleCache? = null
+    private var chunkedDataSourceFactory: ChunkedGoogleVideoDataSource.Factory? = null
     private var exoPlayer: ExoPlayer? = null
     private var remotePlayer: RemoteMediaPlayer? = null
     private var serviceScope: CoroutineScope? = null
@@ -54,9 +55,11 @@ class LinerPlaybackService : MediaSessionService() {
         )
         audioCache = cache
 
+        val dataSourceFactory = ChunkedGoogleVideoDataSource.Factory()
+        chunkedDataSourceFactory = dataSourceFactory
         val cacheDataSourceFactory = CacheDataSource.Factory()
             .setCache(cache)
-            .setUpstreamDataSourceFactory(ChunkedGoogleVideoDataSource.Factory())
+            .setUpstreamDataSourceFactory(dataSourceFactory)
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
 
         val audioAttributes = AudioAttributes.Builder()
@@ -68,8 +71,8 @@ class LinerPlaybackService : MediaSessionService() {
             .setBufferDurationsMs(
                 /* minBufferMs = */ 15_000,
                 /* maxBufferMs = */ 50_000,
-                /* bufferForPlaybackMs = */ 500,
-                /* bufferForPlaybackAfterRebufferMs = */ 1_000,
+                /* bufferForPlaybackMs = */ 250,
+                /* bufferForPlaybackAfterRebufferMs = */ 500,
             )
             .build()
 
@@ -155,7 +158,11 @@ class LinerPlaybackService : MediaSessionService() {
             local.playbackState == Player.STATE_BUFFERING ||
             isLocalBuffering
 
-        if (!isLocalActive && remoteState?.track != null && remoteState.isPlaying) {
+        val shouldUseRemote = !isLocalActive &&
+            remoteState?.track != null &&
+            (remoteState.isPlaying || remoteState.isSlave || session.player === remote)
+
+        if (shouldUseRemote) {
             remote.updateState(remoteState)
             if (session.player !== remote) {
                 session.setPlayer(remote)
@@ -189,6 +196,8 @@ class LinerPlaybackService : MediaSessionService() {
         remotePlayer = null
         audioCache?.release()
         audioCache = null
+        chunkedDataSourceFactory?.release()
+        chunkedDataSourceFactory = null
         super.onDestroy()
     }
 

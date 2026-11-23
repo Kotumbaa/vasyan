@@ -1,17 +1,21 @@
 package `fun`.tryliner.android.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalConfiguration
@@ -31,9 +35,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -64,6 +71,7 @@ import dev.chrisbanes.haze.hazeSource
 import `fun`.tryliner.android.R
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavDestination
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavGraphBuilder
@@ -100,6 +108,8 @@ import `fun`.tryliner.android.ui.search.SearchScreen
 import `fun`.tryliner.android.ui.search.SearchViewModel
 import `fun`.tryliner.android.ui.theme.LinerColors
 import `fun`.tryliner.android.ui.theme.LinerMotion
+import `fun`.tryliner.android.ui.theme.LocalReducedMotion
+import `fun`.tryliner.android.ui.theme.pressScale
 import `fun`.tryliner.android.ui.theme.rememberReducedMotion
 
 object LinerRoutes {
@@ -190,13 +200,30 @@ private fun LinerAppContent(container: AppContainer) {
             }
         }
 
-        val openFactor = (1f - sheetProgress.value).coerceIn(0f, 1f)
-        val bgScale = 1f - 0.055f * openFactor
-        val bgCorner = (18f * openFactor).dp
+        val isSheetMounted by remember {
+            derivedStateOf { sheetProgress.value < 0.998f }
+        }
+        val trackMenuOpener = remember { { track: Track -> menuTrack = track } }
+        val showMiniPlayer = currentTrack != null || activeRemote != null
+        var retainedPlaybackState by remember { mutableStateOf(playbackState) }
+        var retainedRemoteState by remember { mutableStateOf(activeRemote) }
+        if (currentTrack != null) {
+            retainedPlaybackState = playbackState
+        }
+        if (activeRemote != null) {
+            retainedRemoteState = activeRemote
+        }
+        val navBarBottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+        val settledBottomPadding = navBarBottomInset + if (showMiniPlayer) 132.dp else 56.dp
+        val onRemoteToggle = remember(container) { { container.lanConnectManager.sendCommand("toggle") } }
+        val onRemotePrev = remember(container) { { container.lanConnectManager.sendCommand("prev") } }
+        val onRemoteNext = remember(container) { { container.lanConnectManager.sendCommand("next") } }
+        val onPlayOnPhone = remember(container) { { container.lanConnectManager.handoffToPhone() } }
 
         CompositionLocalProvider(
-            LocalTrackMenuOpener provides { track -> menuTrack = track },
-            LocalAppHazeState provides bottomBarHazeState
+            LocalTrackMenuOpener provides trackMenuOpener,
+            LocalAppHazeState provides bottomBarHazeState,
+            LocalReducedMotion provides reducedMotion
         ) {
         AtmosphericBackdrop(
             modifier = Modifier.fillMaxSize(),
@@ -207,34 +234,55 @@ private fun LinerAppContent(container: AppContainer) {
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer {
+                        val openFactor = (1f - sheetProgress.value).coerceIn(0f, 1f)
+                        val bgScale = 1f - 0.055f * openFactor
                         scaleX = bgScale
                         scaleY = bgScale
                         alpha = 1f - 0.25f * openFactor
-                    }
-                    .clip(RoundedCornerShape(bgCorner)),
+                        shape = RoundedCornerShape((18f * openFactor).dp)
+                        clip = openFactor > 0.002f
+                    },
                 bottomBar = {
                     Column(
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        if (currentTrack != null || activeRemote != null) {
+                        AnimatedVisibility(
+                            visible = showMiniPlayer,
+                            enter = if (reducedMotion) {
+                                fadeIn(tween(0))
+                            } else {
+                                slideInVertically(LinerMotion.appleDefaultSpring()) { it / 2 } +
+                                    fadeIn(LinerMotion.easeOutTween(LinerMotion.DURATION_NORMAL))
+                            },
+                            exit = if (reducedMotion) {
+                                fadeOut(tween(0))
+                            } else {
+                                slideOutVertically(LinerMotion.easeOutTween(LinerMotion.DURATION_FAST)) { it / 2 } +
+                                    fadeOut(LinerMotion.easeOutTween(LinerMotion.DURATION_FAST))
+                            }
+                        ) {
+                            val miniPlaybackState = if (currentTrack != null) playbackState else retainedPlaybackState
+                            val miniRemoteState = activeRemote ?: if (currentTrack == null) retainedRemoteState else null
+                            val miniTrack = miniPlaybackState.currentTrack
+                            val miniLiked = miniTrack != null && likedIds.contains(miniTrack.id)
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(bottom = 4.dp)
                             ) {
                                 MiniPlayerBar(
-                                    playbackState = playbackState,
-                                    isLiked = isCurrentTrackLiked,
-                                    onToggleLike = { currentTrack?.let(container::toggleLike) },
+                                    playbackState = miniPlaybackState,
+                                    isLiked = miniLiked,
+                                    onToggleLike = { miniTrack?.let(container::toggleLike) },
                                     onTogglePlayPause = container.playerController::togglePlayPause,
                                     onClick = { isNowPlayingOpen = true },
                                     onPrevious = container.playerController::previous,
                                     onNext = container.playerController::next,
-                                    remoteState = activeRemote,
-                                    onRemoteTogglePlayPause = { container.lanConnectManager.sendCommand("toggle") },
-                                    onRemotePrevious = { container.lanConnectManager.sendCommand("prev") },
-                                    onRemoteNext = { container.lanConnectManager.sendCommand("next") },
-                                    onPlayOnPhone = { container.lanConnectManager.handoffToPhone() }
+                                    remoteState = miniRemoteState,
+                                    onRemoteTogglePlayPause = onRemoteToggle,
+                                    onRemotePrevious = onRemotePrev,
+                                    onRemoteNext = onRemoteNext,
+                                    onPlayOnPhone = onPlayOnPhone
                                 )
                             }
                         }
@@ -315,15 +363,81 @@ private fun LinerAppContent(container: AppContainer) {
                         }
                     }
                 }
-            ) { innerPadding ->
+            ) { _ ->
                 NavHost(
                     navController = navController,
                     startDestination = LinerRoutes.TAB_HOME,
                     enterTransition = {
-                        fadeIn(tween(if (reducedMotion) 0 else LinerMotion.DURATION_FAST, easing = LinerMotion.EaseOut))
+                        if (reducedMotion) {
+                            fadeIn(tween(0))
+                        } else {
+                            val from = tabIndex(initialState.destination)
+                            val to = tabIndex(targetState.destination)
+                            if (from != null && to != null && from != to) {
+                                val dir = if (to > from) 1 else -1
+                                slideInHorizontally(LinerMotion.easeOutTween(LinerMotion.DURATION_NORMAL)) { dir * (it / 10) } +
+                                    fadeIn(LinerMotion.easeOutTween(LinerMotion.DURATION_NORMAL))
+                            } else if (isDetailDestination(targetState.destination)) {
+                                slideInHorizontally(LinerMotion.easeOutTween(LinerMotion.DURATION_NORMAL)) { it / 8 } +
+                                    fadeIn(LinerMotion.easeOutTween(180))
+                            } else {
+                                fadeIn(LinerMotion.easeOutTween(LinerMotion.DURATION_FAST))
+                            }
+                        }
                     },
                     exitTransition = {
-                        fadeOut(tween(if (reducedMotion) 0 else 110, easing = LinerMotion.EaseOut))
+                        if (reducedMotion) {
+                            fadeOut(tween(0))
+                        } else {
+                            val from = tabIndex(initialState.destination)
+                            val to = tabIndex(targetState.destination)
+                            if (from != null && to != null && from != to) {
+                                val dir = if (to > from) 1 else -1
+                                slideOutHorizontally(LinerMotion.easeOutTween(200)) { -dir * (it / 10) } +
+                                    fadeOut(LinerMotion.easeOutTween(180))
+                            } else if (isDetailDestination(targetState.destination)) {
+                                slideOutHorizontally(LinerMotion.easeOutTween(LinerMotion.DURATION_NORMAL)) { -it / 12 } +
+                                    fadeOut(LinerMotion.easeOutTween(180))
+                            } else {
+                                fadeOut(LinerMotion.easeOutTween(LinerMotion.DURATION_FAST))
+                            }
+                        }
+                    },
+                    popEnterTransition = {
+                        if (reducedMotion) {
+                            fadeIn(tween(0))
+                        } else {
+                            val from = tabIndex(initialState.destination)
+                            val to = tabIndex(targetState.destination)
+                            if (from != null && to != null && from != to) {
+                                val dir = if (to > from) 1 else -1
+                                slideInHorizontally(LinerMotion.easeOutTween(LinerMotion.DURATION_NORMAL)) { dir * (it / 10) } +
+                                    fadeIn(LinerMotion.easeOutTween(LinerMotion.DURATION_NORMAL))
+                            } else if (isDetailDestination(initialState.destination)) {
+                                slideInHorizontally(LinerMotion.easeOutTween(LinerMotion.DURATION_NORMAL)) { -it / 12 } +
+                                    fadeIn(LinerMotion.easeOutTween(LinerMotion.DURATION_NORMAL))
+                            } else {
+                                fadeIn(LinerMotion.easeOutTween(LinerMotion.DURATION_FAST))
+                            }
+                        }
+                    },
+                    popExitTransition = {
+                        if (reducedMotion) {
+                            fadeOut(tween(0))
+                        } else {
+                            val from = tabIndex(initialState.destination)
+                            val to = tabIndex(targetState.destination)
+                            if (from != null && to != null && from != to) {
+                                val dir = if (to > from) 1 else -1
+                                slideOutHorizontally(LinerMotion.easeOutTween(200)) { -dir * (it / 10) } +
+                                    fadeOut(LinerMotion.easeOutTween(180))
+                            } else if (isDetailDestination(initialState.destination)) {
+                                slideOutHorizontally(LinerMotion.easeOutTween(200)) { it / 8 } +
+                                    fadeOut(LinerMotion.easeOutTween(160))
+                            } else {
+                                fadeOut(LinerMotion.easeOutTween(LinerMotion.DURATION_FAST))
+                            }
+                        }
                     },
                     modifier = Modifier.fillMaxSize()
                 ) {
@@ -340,7 +454,7 @@ private fun LinerAppContent(container: AppContainer) {
                                 onOpenDailyMix = { mix ->
                                     navController.navigate(LinerRoutes.dailyMixDetail(LinerRoutes.TAB_HOME, mix.id))
                                 },
-                                bottomContentPadding = PaddingValues(bottom = innerPadding.calculateBottomPadding())
+                                bottomContentPadding = PaddingValues(bottom = settledBottomPadding)
                             )
                         }
                         addTabDetailDestinations(
@@ -348,7 +462,7 @@ private fun LinerAppContent(container: AppContainer) {
                             navController = navController,
                             container = container,
                             reducedMotion = reducedMotion,
-                            bottomPadding = innerPadding.calculateBottomPadding()
+                            bottomPadding = settledBottomPadding
                         )
                     }
 
@@ -372,7 +486,7 @@ private fun LinerAppContent(container: AppContainer) {
                                 onOpenCatalogPlaylist = { playlistId ->
                                     navController.navigate(LinerRoutes.catalogPlaylistDetail(LinerRoutes.TAB_SEARCH, playlistId))
                                 },
-                                bottomContentPadding = PaddingValues(bottom = innerPadding.calculateBottomPadding())
+                                bottomContentPadding = PaddingValues(bottom = settledBottomPadding)
                             )
                         }
                         addTabDetailDestinations(
@@ -380,7 +494,7 @@ private fun LinerAppContent(container: AppContainer) {
                             navController = navController,
                             container = container,
                             reducedMotion = reducedMotion,
-                            bottomPadding = innerPadding.calculateBottomPadding()
+                            bottomPadding = settledBottomPadding
                         )
                     }
 
@@ -400,7 +514,7 @@ private fun LinerAppContent(container: AppContainer) {
                                 onOpenPlaylist = { playlistId ->
                                     navController.navigate(LinerRoutes.playlistDetail(LinerRoutes.TAB_LIBRARY, playlistId))
                                 },
-                                bottomContentPadding = PaddingValues(bottom = innerPadding.calculateBottomPadding())
+                                bottomContentPadding = PaddingValues(bottom = settledBottomPadding)
                             )
                         }
                         addTabDetailDestinations(
@@ -408,13 +522,13 @@ private fun LinerAppContent(container: AppContainer) {
                             navController = navController,
                             container = container,
                             reducedMotion = reducedMotion,
-                            bottomPadding = innerPadding.calculateBottomPadding()
+                            bottomPadding = settledBottomPadding
                         )
                     }
                 }
             }
 
-            if (hasPlayableTrack && (isNowPlayingOpen || sheetProgress.value < 0.998f)) {
+            if (hasPlayableTrack && (isNowPlayingOpen || isSheetMounted)) {
                 BackHandler(enabled = isNowPlayingOpen) {
                     isNowPlayingOpen = false
                 }
@@ -441,20 +555,28 @@ private fun LinerAppContent(container: AppContainer) {
                                 LinerMotion.projectMomentum(velocityYPx / screenHeightPx, 0.99f)
                             if (projected > 0.36f) {
                                 scope.launch {
-                                    sheetProgress.animateTo(
-                                        targetValue = 1f,
-                                        animationSpec = LinerMotion.appleDefaultSpring(),
-                                        initialVelocity = (velocityYPx / screenHeightPx).coerceAtLeast(0f)
-                                    )
+                                    if (reducedMotion) {
+                                        sheetProgress.snapTo(1f)
+                                    } else {
+                                        sheetProgress.animateTo(
+                                            targetValue = 1f,
+                                            animationSpec = LinerMotion.appleDefaultSpring(),
+                                            initialVelocity = (velocityYPx / screenHeightPx).coerceAtLeast(0f)
+                                        )
+                                    }
                                     isNowPlayingOpen = false
                                 }
                             } else {
                                 scope.launch {
-                                    sheetProgress.animateTo(
-                                        targetValue = 0f,
-                                        animationSpec = LinerMotion.appleMomentumSpring(),
-                                        initialVelocity = velocityYPx / screenHeightPx
-                                    )
+                                    if (reducedMotion) {
+                                        sheetProgress.snapTo(0f)
+                                    } else {
+                                        sheetProgress.animateTo(
+                                            targetValue = 0f,
+                                            animationSpec = LinerMotion.appleMomentumSpring(),
+                                            initialVelocity = velocityYPx / screenHeightPx
+                                        )
+                                    }
                                 }
                             }
                         },
@@ -467,13 +589,14 @@ private fun LinerAppContent(container: AppContainer) {
                         onToggleShuffle = container.playerController::toggleShuffle,
                         onSeekTo = container.playerController::seekTo,
                         onOpenArtist = { artistId ->
-                            val activePrefix = when {
-                                navBackStackEntry?.destination?.hierarchy?.any { it.route == LinerRoutes.TAB_SEARCH } == true -> LinerRoutes.TAB_SEARCH
-                                navBackStackEntry?.destination?.hierarchy?.any { it.route == LinerRoutes.TAB_LIBRARY } == true -> LinerRoutes.TAB_LIBRARY
-                                else -> LinerRoutes.TAB_HOME
-                            }
+                            val activePrefix = currentTabPrefix(navBackStackEntry?.destination)
                             isNowPlayingOpen = false
                             navController.navigate(LinerRoutes.artistDetail(activePrefix, artistId))
+                        },
+                        onOpenAlbum = { albumId ->
+                            val activePrefix = currentTabPrefix(navBackStackEntry?.destination)
+                            isNowPlayingOpen = false
+                            navController.navigate(LinerRoutes.albumDetail(activePrefix, albumId))
                         },
                         onCycleRepeat = container.playerController::cycleRepeatMode,
                         onPlayQueueIndex = container.playerController::playQueueIndex,
@@ -487,11 +610,7 @@ private fun LinerAppContent(container: AppContainer) {
                     track = selectedTrack,
                     container = container,
                     onOpenArtist = { artistId ->
-                        val activePrefix = when {
-                            navBackStackEntry?.destination?.hierarchy?.any { it.route == LinerRoutes.TAB_SEARCH } == true -> LinerRoutes.TAB_SEARCH
-                            navBackStackEntry?.destination?.hierarchy?.any { it.route == LinerRoutes.TAB_LIBRARY } == true -> LinerRoutes.TAB_LIBRARY
-                            else -> LinerRoutes.TAB_HOME
-                        }
+                        val activePrefix = currentTabPrefix(navBackStackEntry?.destination)
                         isNowPlayingOpen = false
                         navController.navigate(LinerRoutes.artistDetail(activePrefix, artistId))
                     },
@@ -521,11 +640,18 @@ private fun LinerBottomNavItem(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val contentColor = if (selected) LinerColors.TextPrimary else Color.White.copy(alpha = 0.45f)
+    val interactionSource = remember { MutableInteractionSource() }
+    val reducedMotion = rememberReducedMotion()
+    val contentColor by animateColorAsState(
+        targetValue = if (selected) LinerColors.TextPrimary else Color.White.copy(alpha = 0.45f),
+        animationSpec = LinerMotion.easeOutTween(if (reducedMotion) 0 else LinerMotion.DURATION_FAST),
+        label = "bottomNavColor"
+    )
     Column(
         modifier = modifier
+            .pressScale(interactionSource, targetScale = 0.94f)
             .clickable(
-                interactionSource = remember { MutableInteractionSource() },
+                interactionSource = interactionSource,
                 indication = null,
                 onClick = onClick
             )
@@ -567,6 +693,22 @@ private fun NavGraphBuilder.addTabDetailDestinations(
                     fadeIn(LinerMotion.easeOutTween(180))
             }
         },
+        exitTransition = {
+            if (reducedMotion) {
+                fadeOut(tween(0))
+            } else {
+                slideOutHorizontally(LinerMotion.easeOutTween(LinerMotion.DURATION_NORMAL)) { -it / 12 } +
+                    fadeOut(LinerMotion.easeOutTween(180))
+            }
+        },
+        popEnterTransition = {
+            if (reducedMotion) {
+                fadeIn(tween(0))
+            } else {
+                slideInHorizontally(LinerMotion.easeOutTween(LinerMotion.DURATION_NORMAL)) { -it / 12 } +
+                    fadeIn(LinerMotion.easeOutTween(LinerMotion.DURATION_NORMAL))
+            }
+        },
         popExitTransition = {
             if (reducedMotion) {
                 fadeOut(tween(0))
@@ -601,6 +743,22 @@ private fun NavGraphBuilder.addTabDetailDestinations(
                     fadeIn(LinerMotion.easeOutTween(180))
             }
         },
+        exitTransition = {
+            if (reducedMotion) {
+                fadeOut(tween(0))
+            } else {
+                slideOutHorizontally(LinerMotion.easeOutTween(LinerMotion.DURATION_NORMAL)) { -it / 12 } +
+                    fadeOut(LinerMotion.easeOutTween(180))
+            }
+        },
+        popEnterTransition = {
+            if (reducedMotion) {
+                fadeIn(tween(0))
+            } else {
+                slideInHorizontally(LinerMotion.easeOutTween(LinerMotion.DURATION_NORMAL)) { -it / 12 } +
+                    fadeIn(LinerMotion.easeOutTween(LinerMotion.DURATION_NORMAL))
+            }
+        },
         popExitTransition = {
             if (reducedMotion) {
                 fadeOut(tween(0))
@@ -625,4 +783,22 @@ private fun NavGraphBuilder.addTabDetailDestinations(
             bottomContentPadding = PaddingValues(bottom = bottomPadding)
         )
     }
+}
+
+private fun isDetailDestination(dest: NavDestination?): Boolean {
+    val route = dest?.route ?: return false
+    return route.contains("/playlist/") || route.contains("/artist/")
+}
+
+private fun tabIndex(dest: NavDestination?): Int? = when {
+    dest?.hierarchy?.any { it.route == LinerRoutes.TAB_HOME } == true -> 0
+    dest?.hierarchy?.any { it.route == LinerRoutes.TAB_SEARCH } == true -> 1
+    dest?.hierarchy?.any { it.route == LinerRoutes.TAB_LIBRARY } == true -> 2
+    else -> null
+}
+
+private fun currentTabPrefix(dest: NavDestination?): String = when {
+    dest?.hierarchy?.any { it.route == LinerRoutes.TAB_SEARCH } == true -> LinerRoutes.TAB_SEARCH
+    dest?.hierarchy?.any { it.route == LinerRoutes.TAB_LIBRARY } == true -> LinerRoutes.TAB_LIBRARY
+    else -> LinerRoutes.TAB_HOME
 }

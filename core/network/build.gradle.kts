@@ -19,6 +19,7 @@ kotlin {
 dependencies {
     implementation(project(":core:model"))
     implementation(project(":core:crypto"))
+    implementation(project(":core:lyrics"))
     implementation(libs.okhttp)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)

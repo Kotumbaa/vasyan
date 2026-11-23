@@ -13,7 +13,6 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
-import `fun`.tryliner.android.BuildConfig
 import `fun`.tryliner.android.core.lyrics.LyricsFormat
 import `fun`.tryliner.android.core.lyrics.LyricsParser
 import `fun`.tryliner.android.core.lyrics.SyncedLyrics
@@ -22,22 +21,14 @@ import `fun`.tryliner.android.core.model.Track
 import `fun`.tryliner.android.core.network.InnertubeClient
 import `fun`.tryliner.android.core.network.LinerApiClient
 import `fun`.tryliner.android.core.network.ResolvedAudioStream
-import java.net.Proxy
-import java.net.URLEncoder
 import java.time.Instant
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -47,10 +38,12 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.guava.await
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 
 interface RemotePlaybackBridge {
     fun isControllingRemoteSlave(): Boolean
@@ -83,7 +76,11 @@ data class PlaybackUiState(
     val lyrics: SyncedLyrics? = null,
     val isLyricsLoading: Boolean = false,
     val activeStreamSource: String? = null,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val isWaveActive: Boolean = false,
+    val waveVibe: String = "all",
+    val waveSeedLabel: String = "",
+    val isWaveLoading: Boolean = false,
 )
 
 class PlayerController(
@@ -107,16 +104,19 @@ class PlayerController(
     private var resolveJob: Job? = null
     private var lyricsJob: Job? = null
     private var positionTickerJob: Job? = null
-    private val streamCache = ConcurrentHashMap<String, CachedResolvedStream>()
+    private var waveJob: Job? = null
+    private var waveRefillJob: Job? = null
+    private val waveSeenIds = ArrayDeque<String>(160)
+    private val streamCache = object : LinkedHashMap<String, CachedResolvedStream>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, CachedResolvedStream>?): Boolean {
+            return size > MAX_STREAM_CACHE_ENTRIES
+        }
+    }
+    private val streamCacheLock = Any()
     @Volatile
     private var preferRelayUntilMs: Long = 0L
-
-    private val relayHttpClient = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .build()
-
-    private val relayJson = Json { ignoreUnknownKeys = true }
+    @Volatile
+    private var lastRelayFallbackTrackId: String? = null
 
     private data class CachedResolvedStream(
         val url: String,
@@ -190,6 +190,21 @@ class PlayerController(
 
         override fun onPlayerError(error: PlaybackException) {
             Log.e("PlayerController", "ExoPlayer error (${error.errorCodeName}): ${error.message}", error)
+            val current = _state.value
+            val failedTrack = current.currentTrack
+            if (current.activeStreamSource == "YT" &&
+                failedTrack != null &&
+                lastRelayFallbackTrackId != failedTrack.id
+            ) {
+                lastRelayFallbackTrackId = failedTrack.id
+                synchronized(streamCacheLock) {
+                    streamCache.remove(failedTrack.id)
+                }
+                preferRelayUntilMs = System.currentTimeMillis() + 5L * 60L * 1000L
+                Log.w("PlayerController", "Direct YT playback failed for ${failedTrack.id}, retrying via worker relay")
+                playIndex(current.currentIndex, initialPositionMs = current.positionMs)
+                return
+            }
             _state.update {
                 it.copy(
                     isBuffering = false,
@@ -250,15 +265,114 @@ class PlayerController(
         }
         val targetIndex = if (shuffle) 0 else startIndex.coerceIn(0, ordered.lastIndex)
 
+        waveJob?.cancel()
+        waveRefillJob?.cancel()
         _state.update {
             it.copy(
                 queue = ordered,
                 currentIndex = targetIndex,
                 shuffleEnabled = shuffle,
-                errorMessage = null
+                errorMessage = null,
+                isWaveActive = false,
+                isWaveLoading = false
             )
         }
         playIndex(targetIndex, initialPositionMs = initialPositionMs)
+    }
+
+    fun startMyWave(vibe: String = _state.value.waveVibe) {
+        val normalizedVibe = vibe.ifBlank { "all" }
+        waveJob?.cancel()
+        waveRefillJob?.cancel()
+        remoteBridge?.onLocalPlaybackClaimed()
+        _state.update {
+            it.copy(
+                waveVibe = normalizedVibe,
+                isWaveLoading = true,
+                errorMessage = null
+            )
+        }
+        waveJob = scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    apiClient.getMyWave(
+                        vibe = normalizedVibe,
+                        excludeIds = waveSeenIds.toList(),
+                        limit = 20
+                    )
+                }
+            }
+            val resp = result.getOrNull()
+            if (resp == null || resp.items.isEmpty()) {
+                _state.update {
+                    it.copy(
+                        isWaveLoading = false,
+                        errorMessage = result.exceptionOrNull()?.message ?: "Не удалось запустить волну"
+                    )
+                }
+                return@launch
+            }
+            recordWaveSeen(resp.items)
+            _state.update {
+                it.copy(
+                    queue = resp.items,
+                    currentIndex = 0,
+                    shuffleEnabled = false,
+                    repeatMode = RepeatMode.OFF,
+                    isWaveActive = true,
+                    waveVibe = resp.vibe,
+                    waveSeedLabel = resp.seedLabel,
+                    isWaveLoading = false,
+                    errorMessage = null
+                )
+            }
+            playIndex(0)
+        }
+    }
+
+    fun setWaveVibe(vibe: String) {
+        val normalized = vibe.ifBlank { "all" }
+        if (_state.value.waveVibe == normalized && _state.value.isWaveActive) return
+        _state.update { it.copy(waveVibe = normalized) }
+        if (_state.value.isWaveActive) {
+            startMyWave(normalized)
+        }
+    }
+
+    private fun recordWaveSeen(tracks: List<Track>) {
+        for (t in tracks) {
+            if (!waveSeenIds.contains(t.id)) {
+                waveSeenIds.addLast(t.id)
+                while (waveSeenIds.size > 150) {
+                    waveSeenIds.removeFirst()
+                }
+            }
+        }
+    }
+
+    private fun maybeRefillWave(currentIndex: Int) {
+        val cur = _state.value
+        if (!cur.isWaveActive || waveRefillJob?.isActive == true) return
+        if (cur.queue.isEmpty() || currentIndex < cur.queue.size - 3) return
+
+        val vibe = cur.waveVibe
+        val exclude = (waveSeenIds.toList() + cur.queue.map { it.id }).distinct().takeLast(150)
+        waveRefillJob = scope.launch {
+            val resp = withContext(Dispatchers.IO) {
+                runCatching {
+                    apiClient.getMyWave(vibe = vibe, excludeIds = exclude, limit = 16)
+                }.getOrNull()
+            } ?: return@launch
+
+            if (resp.items.isEmpty() || !_state.value.isWaveActive) return@launch
+            recordWaveSeen(resp.items)
+            _state.update { latest ->
+                if (!latest.isWaveActive) return@update latest
+                val existingIds = latest.queue.mapTo(HashSet()) { it.id }
+                val additions = resp.items.filter { it.id !in existingIds }
+                if (additions.isEmpty()) latest else latest.copy(queue = latest.queue + additions)
+            }
+        }
     }
 
     fun playSingle(track: Track, initialPositionMs: Long = 0L, forceLocal: Boolean = false) {
@@ -273,6 +387,7 @@ class PlayerController(
 
     fun playLocal() {
         val controller = mediaController ?: return
+        remoteBridge?.onLocalPlaybackClaimed()
         onBeforeLocalPlayback?.invoke()
         _state.update { it.copy(isPlaying = true, errorMessage = null) }
         startPositionTicker()
@@ -329,13 +444,15 @@ class PlayerController(
             return
         }
         val controller = mediaController ?: return
-        onBeforeLocalPlayback?.invoke()
         val currentlyPlaying = _state.value.isPlaying || (!isRemoteSessionAttached() && (controller.isPlaying || controller.playWhenReady))
         if (currentlyPlaying) {
+            onBeforeLocalPlayback?.invoke()
             _state.update { it.copy(isPlaying = false) }
             stopPositionTicker()
             controller.pause()
         } else {
+            remoteBridge?.onLocalPlaybackClaimed()
+            onBeforeLocalPlayback?.invoke()
             _state.update { it.copy(isPlaying = true, errorMessage = null) }
             startPositionTicker()
             if (controller.playbackState == Player.STATE_IDLE && controller.mediaItemCount > 0) {
@@ -454,6 +571,7 @@ class PlayerController(
         }
 
         loadLyrics(track)
+        maybeRefillWave(index)
 
         resolveJob = scope.launch {
             if (wasRapidSkip) {
@@ -462,7 +580,9 @@ class PlayerController(
             runCatching {
                 val localUri = downloadManager?.localUriFor(track.id)
                 val now = System.currentTimeMillis()
-                val cached = streamCache[track.id]?.takeIf { it.expiresAtMs - 60_000L > now }
+                val cached = synchronized(streamCacheLock) {
+                    streamCache[track.id]?.takeIf { it.expiresAtMs - 60_000L > now }
+                }
 
                 val resolvedPlayable: CachedResolvedStream = when {
                     localUri != null -> CachedResolvedStream(
@@ -475,7 +595,9 @@ class PlayerController(
                     else -> withContext(Dispatchers.IO) {
                         resolveDirectOrRelay(track, now)
                     }.also { fresh ->
-                        streamCache[track.id] = fresh
+                        synchronized(streamCacheLock) {
+                            streamCache[track.id] = fresh
+                        }
                     }
                 }
                 _state.update { it.copy(activeStreamSource = resolvedPlayable.sourceLabel) }
@@ -507,6 +629,7 @@ class PlayerController(
                 controller.setMediaItem(mediaItem, clampedInitialPos)
                 controller.prepare()
                 controller.play()
+                prefetchNextTrack(index)
             }.onFailure { error ->
                 if (error is CancellationException) throw error
                 Log.e("PlayerController", "Failed to resolve/play ${track.id}: ${error.message}", error)
@@ -516,6 +639,25 @@ class PlayerController(
                         isPlaying = false,
                         errorMessage = error.message ?: "Failed to load audio stream"
                     )
+                }
+            }
+        }
+    }
+
+    private fun prefetchNextTrack(currentIndex: Int) {
+        val nextTrack = _state.value.queue.getOrNull(currentIndex + 1) ?: return
+        if (downloadManager?.localUriFor(nextTrack.id) != null) return
+        val now = System.currentTimeMillis()
+        val alreadyCached = synchronized(streamCacheLock) {
+            streamCache[nextTrack.id]?.takeIf { it.expiresAtMs - 60_000L > now } != null
+        }
+        if (alreadyCached) return
+        scope.launch(Dispatchers.IO) {
+            delay(1_000L)
+            runCatching {
+                val resolved = resolveDirectOrRelay(nextTrack, System.currentTimeMillis())
+                synchronized(streamCacheLock) {
+                    streamCache[nextTrack.id] = resolved
                 }
             }
         }
@@ -535,29 +677,69 @@ class PlayerController(
                     resolveDirectInnertube(track, now)
                 }
         }
-        return try {
-            withTimeout(2_800L) {
-                resolveDirectInnertube(track, now)
+        return coroutineScope {
+            val directDeferred = async {
+                runCatching {
+                    withTimeout(2_400L) {
+                        resolveDirectInnertube(track, now)
+                    }
+                }
             }
-        } catch (directErr: Exception) {
-            if (directErr is CancellationException && directErr !is TimeoutCancellationException) {
-                throw directErr
+            val firstTry = withTimeoutOrNull(600L) { directDeferred.await() }
+            if (firstTry != null) {
+                if (firstTry.isSuccess) {
+                    return@coroutineScope firstTry.getOrThrow()
+                }
+                val directErr = firstTry.exceptionOrNull()
+                if (directErr is CancellationException && directErr !is TimeoutCancellationException) {
+                    throw directErr
+                }
+                Log.w("PlayerController", "Direct stream failed for ${track.id} (${directErr?.message}), falling back to worker relay")
+                val msg = directErr?.message.orEmpty()
+                if (directErr is TimeoutCancellationException ||
+                    msg.contains("unreachable", ignoreCase = true) ||
+                    msg.contains("timed out", ignoreCase = true) ||
+                    msg.contains("timeout", ignoreCase = true)
+                ) {
+                    preferRelayUntilMs = System.currentTimeMillis() + 5L * 60L * 1000L
+                }
+                return@coroutineScope resolveViaWorkerRelay(track, System.currentTimeMillis())
             }
-            Log.w("PlayerController", "Direct stream failed for ${track.id} (${directErr.message}), falling back to worker relay")
-            val msg = directErr.message.orEmpty()
-            if (directErr is TimeoutCancellationException ||
-                msg.contains("unreachable", ignoreCase = true) ||
-                msg.contains("timed out", ignoreCase = true) ||
-                msg.contains("timeout", ignoreCase = true)
-            ) {
-                preferRelayUntilMs = System.currentTimeMillis() + 5L * 60L * 1000L
+
+            // Direct resolution is taking >600ms: hedge with worker relay in parallel and take the first winner.
+            Log.i("PlayerController", "Direct stream slow for ${track.id} (>600ms), racing worker relay")
+            val relayDeferred = async {
+                runCatching { resolveViaWorkerRelay(track, System.currentTimeMillis()) }
             }
-            resolveViaWorkerRelay(track, System.currentTimeMillis())
+            val winner: Pair<Boolean, Result<CachedResolvedStream>> = select {
+                directDeferred.onAwait { res -> false to res }
+                relayDeferred.onAwait { res -> true to res }
+            }
+            val (winnerIsRelay, winnerRes) = winner
+            if (winnerRes.isSuccess) {
+                if (winnerIsRelay) {
+                    directDeferred.cancel()
+                    preferRelayUntilMs = System.currentTimeMillis() + 5L * 60L * 1000L
+                } else {
+                    relayDeferred.cancel()
+                }
+                return@coroutineScope winnerRes.getOrThrow()
+            }
+
+            val secondRes = if (winnerIsRelay) directDeferred.await() else relayDeferred.await()
+            if (secondRes.isSuccess) {
+                if (!winnerIsRelay) {
+                    preferRelayUntilMs = System.currentTimeMillis() + 5L * 60L * 1000L
+                }
+                return@coroutineScope secondRes.getOrThrow()
+            }
+            throw (secondRes.exceptionOrNull() ?: winnerRes.exceptionOrNull()
+                ?: IllegalStateException("Failed to resolve stream"))
         }
     }
 
     private suspend fun resolveDirectInnertube(track: Track, now: Long): CachedResolvedStream {
-        val fresh = innertubeClient.resolveAudioStream(track.id)
+        val fresh = innertubeClient.resolveAudioStream(track.id, verifyReachable = false)
         Log.i("PlayerController", "Resolved direct stream for ${track.id}: host=${Uri.parse(fresh.url).host}")
         val expMs = fresh.expiresAt
             ?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }
@@ -570,31 +752,19 @@ class PlayerController(
         )
     }
 
-    private fun resolveViaWorkerRelay(track: Track, now: Long): CachedResolvedStream {
-        val base = BuildConfig.LINER_API_BASE_URL.trimEnd('/')
-        val videoId = URLEncoder.encode(track.id, "UTF-8")
-        val title = URLEncoder.encode(track.title, "UTF-8")
-        val artist = URLEncoder.encode(track.artistNames, "UTF-8")
-        val reqUrl = "$base/v1/stream/resolve?videoId=$videoId&title=$title&artist=$artist"
-        val request = Request.Builder().url(reqUrl).get().build()
-        relayHttpClient.newCall(request).execute().use { res ->
-            val body = res.body?.string().orEmpty()
-            if (!res.isSuccessful) {
-                throw IllegalStateException("Relay stream HTTP ${res.code}: $body")
-            }
-            val obj = relayJson.parseToJsonElement(body).jsonObject
-            val url = obj["url"]?.jsonPrimitive?.content
-                ?: throw IllegalStateException("Relay stream missing url")
-            val isHls = obj["isHls"]?.jsonPrimitive?.booleanOrNull == true
-            val source = obj["source"]?.jsonPrimitive?.content ?: "relay"
-            Log.i("PlayerController", "Resolved relay stream for ${track.id}: source=$source hls=$isHls")
-            return CachedResolvedStream(
-                url = url,
-                isHls = isHls,
-                sourceLabel = if (source == "soundcloud") "SC" else "YT",
-                expiresAtMs = now + 12L * 60L * 1000L
-            )
-        }
+    private suspend fun resolveViaWorkerRelay(track: Track, now: Long): CachedResolvedStream {
+        val resolved = apiClient.resolveStream(
+            videoId = track.id,
+            title = track.title,
+            artist = track.artistNames,
+        )
+        Log.i("PlayerController", "Resolved relay stream for ${track.id}: source=${resolved.source} hls=${resolved.isHls}")
+        return CachedResolvedStream(
+            url = resolved.url,
+            isHls = resolved.isHls,
+            sourceLabel = if (resolved.source == "soundcloud") "SC" else "YT",
+            expiresAtMs = now + 12L * 60L * 1000L
+        )
     }
 
     private fun loadLyrics(track: Track) {
@@ -625,7 +795,7 @@ class PlayerController(
                                 }
                             }
                             is LyricsStreamEvent.Done -> {
-                                if (event.instrumental == true && bestSynced == null) {
+                                if (event.instrumental && bestSynced == null) {
                                     bestSynced = SyncedLyrics.empty(isInstrumental = true)
                                     _state.update { it.copy(lyrics = bestSynced) }
                                 }
@@ -703,5 +873,9 @@ class PlayerController(
         mediaController?.removeListener(playerListener)
         mediaController?.release()
         mediaController = null
+    }
+
+    private companion object {
+        const val MAX_STREAM_CACHE_ENTRIES = 50
     }
 }

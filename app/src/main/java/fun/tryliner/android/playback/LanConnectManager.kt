@@ -264,12 +264,12 @@ class LanConnectManager(
         val remote = _remoteState.value ?: return
         val remoteTrack = remote.track ?: return
         onLocalPlaybackClaimed()
-        sendCommand(action = "handoff")
         playerController.playSingle(
             remoteTrack.toTrack(),
             initialPositionMs = remote.positionMs,
             forceLocal = true
         )
+        sendCommand(action = "handoff")
         synchronized(wsLock) { activeWebSocket }?.let { sendCurrentState(it) }
     }
 
@@ -488,26 +488,26 @@ class LanConnectManager(
             "state" -> {
                 val stateMsg = runCatching { json.decodeFromString<LanStateMessage>(text) }.getOrNull() ?: return
                 if (stateMsg.deviceId == deviceId) return
-                val peerIsSlave = stateMsg.isSlave || stateMsg.isPlaying
-                val localState = playerController.state.value
-                val claimGraceElapsed = (SystemClock.elapsedRealtime() - lastLocalClaimAtMs) > 2500L
-                if (stateMsg.isPlaying && !localState.isPlaying && !localState.isBuffering && claimGraceElapsed) {
-                    _isLocalSlave.value = false
-                }
-                _remoteState.value = RemotePlaybackState(
-                    deviceId = stateMsg.deviceId,
-                    deviceName = stateMsg.deviceName,
-                    platform = stateMsg.platform,
-                    isPlaying = stateMsg.isPlaying,
-                    positionMs = stateMsg.positionMs,
-                    durationMs = stateMsg.durationMs,
-                    updatedAt = stateMsg.updatedAt,
-                    track = stateMsg.track,
-                    volume = stateMsg.volume.coerceIn(0f, 1f),
-                    isSlave = peerIsSlave
-                )
-                if (stateMsg.track != null) {
-                    scope.launch(Dispatchers.Main.immediate) {
+                scope.launch(Dispatchers.Main.immediate) {
+                    val peerIsSlave = stateMsg.isSlave || stateMsg.isPlaying
+                    val localState = playerController.state.value
+                    val claimGraceElapsed = (SystemClock.elapsedRealtime() - lastLocalClaimAtMs) > 2500L
+                    if (stateMsg.isPlaying && !localState.isPlaying && !localState.isBuffering && claimGraceElapsed) {
+                        _isLocalSlave.value = false
+                    }
+                    _remoteState.value = RemotePlaybackState(
+                        deviceId = stateMsg.deviceId,
+                        deviceName = stateMsg.deviceName,
+                        platform = stateMsg.platform,
+                        isPlaying = stateMsg.isPlaying,
+                        positionMs = stateMsg.positionMs,
+                        durationMs = stateMsg.durationMs,
+                        updatedAt = stateMsg.updatedAt,
+                        track = stateMsg.track,
+                        volume = stateMsg.volume.coerceIn(0f, 1f),
+                        isSlave = peerIsSlave
+                    )
+                    if (stateMsg.track != null) {
                         playerController.ensureSessionConnected()
                     }
                 }

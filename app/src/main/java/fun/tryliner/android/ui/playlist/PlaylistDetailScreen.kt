@@ -3,11 +3,28 @@ package `fun`.tryliner.android.ui.playlist
 import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.graphicsLayer
+import `fun`.tryliner.android.ui.components.LinerShimmerBox
+import `fun`.tryliner.android.ui.components.rememberShimmerAlphaState
+import `fun`.tryliner.android.ui.theme.pressScale
+import `fun`.tryliner.android.ui.theme.rememberReducedMotion
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -88,6 +105,7 @@ import `fun`.tryliner.android.ui.components.LinerCoverArt
 import `fun`.tryliner.android.ui.components.LocalTrackDownloads
 import `fun`.tryliner.android.ui.components.TrackRow
 import `fun`.tryliner.android.ui.components.formatDurationMs
+import `fun`.tryliner.android.ui.components.formatTrackCountRu
 import `fun`.tryliner.android.ui.components.rememberCoverAmbient
 import `fun`.tryliner.android.ui.theme.LinerColors
 import `fun`.tryliner.android.ui.theme.LinerMotion
@@ -115,7 +133,16 @@ fun PlaylistDetailScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val importState by viewModel.importState.collectAsStateWithLifecycle()
     val likedIds by container.likedTrackIds.collectAsStateWithLifecycle()
-    val playbackState by container.playerController.state.collectAsStateWithLifecycle()
+    val currentTrackIdFlow = remember(container) {
+        container.playerController.state.map { it.currentTrack?.id }.distinctUntilChanged()
+    }
+    val currentPlayingTrackId by currentTrackIdFlow.collectAsStateWithLifecycle(
+        initialValue = container.playerController.state.value.currentTrack?.id
+    )
+    val reducedMotion = rememberReducedMotion()
+    val fastDuration = if (reducedMotion) 0 else LinerMotion.DURATION_FAST
+    val normalDuration = if (reducedMotion) 0 else LinerMotion.DURATION_NORMAL
+    val ambientDuration = if (reducedMotion) 0 else LinerMotion.DURATION_AMBIENT
     var showImportDialog by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val showStickyTitle by remember {
@@ -126,6 +153,11 @@ fun PlaylistDetailScreen(
             listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 12
         }
     }
+    val headerBlurAlpha by animateFloatAsState(
+        targetValue = if (isScrolled) 1f else 0f,
+        animationSpec = LinerMotion.easeOutTween(fastDuration),
+        label = "playlistHeaderBlurAlpha"
+    )
     val haptics = LocalHapticFeedback.current
     val localFallbackHaze = remember { HazeState() }
     val appHazeState = LocalAppHazeState.current ?: localFallbackHaze
@@ -141,6 +173,11 @@ fun PlaylistDetailScreen(
             PlaylistHeaderTints[idx]
         }
     }
+    val animatedTopTintState = animateColorAsState(
+        targetValue = topTint,
+        animationSpec = LinerMotion.easeOutTween(ambientDuration),
+        label = "playlistAmbientTopTint"
+    )
 
     Box(
         modifier = Modifier
@@ -158,122 +195,232 @@ fun PlaylistDetailScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(380.dp)
-                    .background(
-                        Brush.verticalGradient(
-                            0.0f to topTint.copy(alpha = 0.74f),
-                            0.55f to PlaylistBackdropTarget.copy(alpha = 0.86f),
-                            1.0f to PlaylistBackdropTarget
+                    .drawBehind {
+                        val tint = animatedTopTintState.value
+                        drawRect(
+                            brush = Brush.verticalGradient(
+                                0.0f to tint.copy(alpha = 0.74f),
+                                0.55f to PlaylistBackdropTarget.copy(alpha = 0.86f),
+                                1.0f to PlaylistBackdropTarget
+                            )
                         )
-                    )
+                    }
             )
 
-            when {
-                state.isLoading && state.tracks.isEmpty() -> {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(top = headerOverlayHeight + 16.dp)
-                    ) {
-                        TrackListSkeleton(count = 8)
+            val contentPhase = when {
+                state.isLoading && state.tracks.isEmpty() -> 0
+                state.errorMessage != null && state.tracks.isEmpty() -> 1
+                else -> 2
+            }
+            Crossfade(
+                targetState = contentPhase,
+                animationSpec = LinerMotion.easeOutTween(normalDuration),
+                label = "playlistContentPhase"
+            ) { phase ->
+                when (phase) {
+                    0 -> {
+                        val sharedAlpha = rememberShimmerAlphaState()
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(top = headerOverlayHeight + 8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                LinerShimmerBox(
+                                    modifier = Modifier.size(112.dp),
+                                    shape = LinerShapes.HeroCover,
+                                    shimmerAlpha = sharedAlpha
+                                )
+                                Spacer(modifier = Modifier.width(16.dp))
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    LinerShimmerBox(
+                                        modifier = Modifier
+                                            .fillMaxWidth(0.72f)
+                                            .height(22.dp),
+                                        shimmerAlpha = sharedAlpha
+                                    )
+                                    LinerShimmerBox(
+                                        modifier = Modifier
+                                            .fillMaxWidth(0.48f)
+                                            .height(14.dp),
+                                        shimmerAlpha = sharedAlpha
+                                    )
+                                    LinerShimmerBox(
+                                        modifier = Modifier
+                                            .width(96.dp)
+                                            .height(24.dp),
+                                        shape = LinerShapes.HeroButton,
+                                        shimmerAlpha = sharedAlpha
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(18.dp))
+                            Row(
+                                modifier = Modifier.padding(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                LinerShimmerBox(
+                                    modifier = Modifier
+                                        .width(120.dp)
+                                        .height(40.dp),
+                                    shape = CircleShape,
+                                    shimmerAlpha = sharedAlpha
+                                )
+                                LinerShimmerBox(
+                                    modifier = Modifier.size(40.dp),
+                                    shape = CircleShape,
+                                    shimmerAlpha = sharedAlpha
+                                )
+                                LinerShimmerBox(
+                                    modifier = Modifier.size(40.dp),
+                                    shape = LinerShapes.HeroButton,
+                                    shimmerAlpha = sharedAlpha
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(18.dp))
+                            TrackListSkeleton(count = 8)
+                        }
                     }
-                }
-                state.errorMessage != null && state.tracks.isEmpty() -> {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 24.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                text = state.errorMessage.orEmpty(),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = LinerColors.TextSecondary
-                            )
-                            Spacer(modifier = Modifier.height(10.dp))
-                            TextButton(onClick = viewModel::load) {
-                                Text("Повторить", color = LinerColors.TextPrimary)
+                    1 -> {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 24.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = state.errorMessage.orEmpty(),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = LinerColors.TextSecondary
+                                )
+                                Spacer(modifier = Modifier.height(10.dp))
+                                TextButton(onClick = viewModel::load) {
+                                    Text("Повторить", color = LinerColors.TextPrimary)
+                                }
                             }
                         }
                     }
-                }
-                else -> {
-                    val listBottomPadding = (bottomContentPadding.calculateBottomPadding() + 24.dp)
-                        .coerceAtLeast(140.dp)
-                    PullToRefreshBox(
-                        isRefreshing = state.isLoading && state.tracks.isNotEmpty(),
-                        onRefresh = {
-                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            viewModel.load()
-                        },
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        LazyColumn(
-                            state = listState,
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(
-                                start = 12.dp,
-                                end = 12.dp,
-                                top = headerOverlayHeight + 4.dp,
-                                bottom = listBottomPadding
-                            ),
-                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                    else -> {
+                        val listBottomPadding = (bottomContentPadding.calculateBottomPadding() + 24.dp)
+                            .coerceAtLeast(140.dp)
+                        val pullToRefreshState = rememberPullToRefreshState()
+                        val isRefreshing = state.isLoading && state.tracks.isNotEmpty()
+                        PullToRefreshBox(
+                            isRefreshing = isRefreshing,
+                            onRefresh = {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                viewModel.load()
+                            },
+                            state = pullToRefreshState,
+                            indicator = {
+                                PullToRefreshDefaults.Indicator(
+                                    state = pullToRefreshState,
+                                    isRefreshing = isRefreshing,
+                                    containerColor = LinerColors.SurfaceGlass,
+                                    color = LinerColors.TextPrimary,
+                                    modifier = Modifier
+                                        .align(Alignment.TopCenter)
+                                        .padding(top = headerOverlayHeight + 4.dp)
+                                )
+                            },
+                            modifier = Modifier.fillMaxSize()
                         ) {
-                            item(key = "hero_header") {
-                                Box(modifier = Modifier.padding(horizontal = 4.dp)) {
-                                    EntityHeroHeader(
-                                        state = state,
-                                        onPlayAll = {
-                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                            viewModel.playAll(shuffle = false)
-                                        },
-                                        onShuffle = {
-                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                            viewModel.playAll(shuffle = true)
-                                        },
-                                        onOpenImport = if (state.isLikedCollection) {
-                                            {
+                            LazyColumn(
+                                state = listState,
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(
+                                    start = 12.dp,
+                                    end = 12.dp,
+                                    top = headerOverlayHeight + 4.dp,
+                                    bottom = listBottomPadding
+                                ),
+                                verticalArrangement = Arrangement.spacedBy(0.dp)
+                            ) {
+                                item(key = "hero_header") {
+                                    Box(modifier = Modifier.padding(horizontal = 4.dp)) {
+                                        EntityHeroHeader(
+                                            state = state,
+                                            onPlayAll = {
                                                 haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                viewModel.resetImportState()
-                                                showImportDialog = true
+                                                viewModel.playAll(shuffle = false)
+                                            },
+                                            onShuffle = {
+                                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                viewModel.playAll(shuffle = true)
+                                            },
+                                            onOpenImport = if (state.isLikedCollection) {
+                                                {
+                                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                    viewModel.resetImportState()
+                                                    showImportDialog = true
+                                                }
+                                            } else {
+                                                null
                                             }
-                                        } else {
-                                            null
-                                        }
-                                    )
-                                }
-                                Spacer(modifier = Modifier.height(14.dp))
-                            }
-
-                            if (state.tracks.isEmpty()) {
-                                item(key = "empty_tracks") {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(vertical = 40.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(
-                                            text = "Пока нет треков",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = LinerColors.TextTertiary
                                         )
                                     }
+                                    Spacer(modifier = Modifier.height(14.dp))
                                 }
-                            } else {
-                                itemsIndexed(
-                                    items = state.tracks,
-                                    key = { index, track -> "${index}_${track.id}" }
-                                ) { index, track ->
-                                    val isLiked = likedIds.contains(track.id)
-                                    val isPlayingCurrent = playbackState.currentTrack?.id == track.id
-                                    TrackRow(
-                                        track = track,
-                                        isLiked = isLiked,
-                                        isPlayingCurrent = isPlayingCurrent,
-                                        onClick = { viewModel.playTrackAt(index) },
-                                        onToggleLike = { viewModel.toggleLike(track) }
-                                    )
+
+                                if (state.tracks.isEmpty()) {
+                                    item(key = "empty_tracks") {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 40.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = "Пока нет треков",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = LinerColors.TextTertiary
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    val trackTotal = state.tracks.size
+                                    itemsIndexed(
+                                        items = state.tracks,
+                                        key = { index, track -> "${index}_${track.id}" }
+                                    ) { index, track ->
+                                        val isLiked = likedIds.contains(track.id)
+                                        val isPlayingCurrent = currentPlayingTrackId == track.id
+                                        val panelShape = when {
+                                            trackTotal == 1 -> LinerShapes.Item
+                                            index == 0 -> RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
+                                            index == trackTotal - 1 -> RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp)
+                                            else -> RoundedCornerShape(0.dp)
+                                        }
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(panelShape)
+                                                .background(LinerColors.FillSubtle)
+                                                .padding(
+                                                    start = 4.dp,
+                                                    end = 4.dp,
+                                                    top = if (index == 0) 4.dp else 0.dp,
+                                                    bottom = if (index == trackTotal - 1) 4.dp else 0.dp
+                                                )
+                                        ) {
+                                            TrackRow(
+                                                track = track,
+                                                isLiked = isLiked,
+                                                isPlayingCurrent = isPlayingCurrent,
+                                                onClick = { viewModel.playTrackAt(index) },
+                                                onToggleLike = { viewModel.toggleLike(track) }
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -283,37 +430,39 @@ fun PlaylistDetailScreen(
         }
 
         // Top bar overlay: frosted-glass translucent + backdrop blur when scrolled (matching bottom nav)
+        val backInteraction = remember { MutableInteractionSource() }
+        val stickyPlayInteraction = remember { MutableInteractionSource() }
         Box(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
-                .then(
-                    if (isScrolled) {
-                        Modifier
-                            .hazeEffect(
-                                state = appHazeState,
-                                style = HazeStyle(
-                                    backgroundColor = Color(0xFF0D0F14),
-                                    tint = HazeTint(Color(0xFF0D0F14).copy(alpha = 0.56f)),
-                                    blurRadius = 24.dp
-                                )
-                            )
-                            .background(
-                                Brush.verticalGradient(
-                                    0.0f to Color(0x550A0C10),
-                                    0.96f to Color.Transparent,
-                                    1.0f to Color.White.copy(alpha = 0.05f)
-                                )
-                            )
-                    } else {
-                        Modifier
-                    }
-                )
-                .statusBarsPadding()
         ) {
+            if (headerBlurAlpha > 0.001f) {
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .graphicsLayer { alpha = headerBlurAlpha }
+                        .hazeEffect(
+                            state = appHazeState,
+                            style = HazeStyle(
+                                backgroundColor = Color(0xFF0D0F14),
+                                tint = HazeTint(Color(0xFF0D0F14).copy(alpha = 0.56f)),
+                                blurRadius = 24.dp
+                            )
+                        )
+                        .background(
+                            Brush.verticalGradient(
+                                0.0f to Color(0x550A0C10),
+                                0.96f to Color.Transparent,
+                                1.0f to Color.White.copy(alpha = 0.05f)
+                            )
+                        )
+                )
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .statusBarsPadding()
                     .padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -323,9 +472,12 @@ fun PlaylistDetailScreen(
                         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         onBack()
                     },
+                    interactionSource = backInteraction,
                     shape = CircleShape,
                     color = Color.White.copy(alpha = 0.12f),
-                    modifier = Modifier.size(38.dp)
+                    modifier = Modifier
+                        .size(38.dp)
+                        .pressScale(backInteraction)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
@@ -337,38 +489,43 @@ fun PlaylistDetailScreen(
                     }
                 }
 
-                AnimatedVisibility(
-                    visible = showStickyTitle,
-                    enter = fadeIn(),
-                    exit = fadeOut(),
-                    modifier = Modifier.weight(1f)
+                Box(
+                    modifier = Modifier.weight(1f),
+                    contentAlignment = Alignment.CenterStart
                 ) {
-                    Text(
-                        text = if (state.isLikedCollection) "Понравившиеся" else state.title,
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                        color = LinerColors.TextPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                if (!showStickyTitle) {
-                    Spacer(modifier = Modifier.weight(1f))
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = showStickyTitle,
+                        enter = fadeIn(LinerMotion.easeOutTween(fastDuration)),
+                        exit = fadeOut(LinerMotion.easeOutTween(fastDuration))
+                    ) {
+                        Text(
+                            text = if (state.isLikedCollection) "Понравившиеся" else state.title,
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = LinerColors.TextPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
 
                 AnimatedVisibility(
                     visible = showStickyTitle && state.tracks.isNotEmpty(),
-                    enter = fadeIn(),
-                    exit = fadeOut()
+                    enter = fadeIn(LinerMotion.easeOutTween(fastDuration)) +
+                        scaleIn(LinerMotion.easeOutTween(fastDuration), initialScale = 0.92f),
+                    exit = fadeOut(LinerMotion.easeOutTween(fastDuration)) +
+                        scaleOut(LinerMotion.easeOutTween(fastDuration), targetScale = 0.92f)
                 ) {
                     Surface(
                         onClick = {
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             viewModel.playAll(shuffle = false)
                         },
+                        interactionSource = stickyPlayInteraction,
                         shape = CircleShape,
                         color = Color.White,
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier
+                            .size(36.dp)
+                            .pressScale(stickyPlayInteraction)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
@@ -470,7 +627,7 @@ private fun EntityHeroHeader(
                     color = LinerColors.HeroGlass
                 ) {
                     Text(
-                        text = "${state.tracks.size} tracks$durationText",
+                        text = "${formatTrackCountRu(state.tracks.size)}$durationText",
                         style = MaterialTheme.typography.bodySmall,
                         color = LinerColors.TextSecondary,
                         maxLines = 1,
@@ -484,6 +641,9 @@ private fun EntityHeroHeader(
         Spacer(modifier = Modifier.height(18.dp))
 
         // White pill "Play all" button (no border/shadow) + borderless white@0.10f "Shuffle" button
+        val playInteraction = remember { MutableInteractionSource() }
+        val shuffleInteraction = remember { MutableInteractionSource() }
+        val importInteraction = remember { MutableInteractionSource() }
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -491,6 +651,7 @@ private fun EntityHeroHeader(
             Button(
                 onClick = onPlayAll,
                 enabled = state.tracks.isNotEmpty(),
+                interactionSource = playInteraction,
                 shape = CircleShape,
                 elevation = ButtonDefaults.buttonElevation(
                     defaultElevation = 0.dp,
@@ -506,7 +667,9 @@ private fun EntityHeroHeader(
                     disabledContentColor = LinerColors.BtnPrimaryText.copy(alpha = 0.6f)
                 ),
                 contentPadding = PaddingValues(horizontal = 22.dp, vertical = 10.dp),
-                modifier = Modifier.height(40.dp)
+                modifier = Modifier
+                    .height(40.dp)
+                    .pressScale(playInteraction)
             ) {
                 Icon(
                     painter = painterResource(R.drawable.ic_solar_play),
@@ -523,9 +686,12 @@ private fun EntityHeroHeader(
             Surface(
                 onClick = onShuffle,
                 enabled = state.tracks.isNotEmpty(),
+                interactionSource = shuffleInteraction,
                 shape = CircleShape,
                 color = LinerColors.HeroGlass,
-                modifier = Modifier.size(40.dp)
+                modifier = Modifier
+                    .size(40.dp)
+                    .pressScale(shuffleInteraction)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
@@ -546,9 +712,12 @@ private fun EntityHeroHeader(
             if (onOpenImport != null) {
                 Surface(
                     onClick = onOpenImport,
+                    interactionSource = importInteraction,
                     shape = CircleShape,
                     color = LinerColors.HeroGlass,
-                    modifier = Modifier.height(40.dp)
+                    modifier = Modifier
+                        .height(40.dp)
+                        .pressScale(importInteraction)
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 14.dp),
@@ -623,7 +792,7 @@ private fun ImportLikedDialog(
                     enabled = !importState.isImporting,
                     placeholder = {
                         Text(
-                            text = "https://open.spotify.com/playlist/...\nhttps://music.youtube.com/playlist?list=...\nили: Artist - Song",
+                            text = "https://open.spotify.com/playlist/...\nhttps://music.youtube.com/playlist?list=...\nили: Артист - Трек",
                             color = LinerColors.TextTertiary,
                             style = MaterialTheme.typography.bodySmall
                         )
@@ -749,12 +918,20 @@ private fun PlaylistDownloadButton(
     tracks: List<`fun`.tryliner.android.core.model.Track>,
 ) {
     val manager = LocalTrackDownloads.current ?: return
+    val reducedMotion = rememberReducedMotion()
+    val fastDuration = if (reducedMotion) 0 else LinerMotion.DURATION_FAST
+    val interactionSource = remember { MutableInteractionSource() }
     val states by manager.states.collectAsStateWithLifecycle()
     var confirmDeleteAll by remember { mutableStateOf(false) }
 
     val downloadedCount = tracks.count { states[it.id] == TrackDownloadState.Downloaded }
     val anyDownloading = tracks.any { states[it.id] is TrackDownloadState.Downloading }
     val allDownloaded = tracks.isNotEmpty() && downloadedCount == tracks.size
+    val stateKey = when {
+        anyDownloading -> 1
+        allDownloaded -> 2
+        else -> 0
+    }
 
     Surface(
         onClick = {
@@ -767,57 +944,71 @@ private fun PlaylistDownloadButton(
             }
         },
         enabled = tracks.isNotEmpty(),
+        interactionSource = interactionSource,
         shape = LinerShapes.HeroButton,
         color = LinerColors.HeroGlass,
-        modifier = Modifier.size(40.dp)
+        modifier = Modifier
+            .size(40.dp)
+            .pressScale(interactionSource)
     ) {
         Box(contentAlignment = Alignment.Center) {
-            when {
-                anyDownloading -> {
-                    val rawProgress = if (tracks.isNotEmpty()) downloadedCount.toFloat() / tracks.size else 0f
-                    val progress by animateFloatAsState(
-                        targetValue = rawProgress,
-                        animationSpec = LinerMotion.easeOutTween(180),
-                        label = "playlistDownloadProgress"
-                    )
-                    if (progress <= 0f) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            strokeWidth = 2.dp,
-                            color = LinerColors.TextPrimary
+            AnimatedContent(
+                targetState = stateKey,
+                transitionSpec = {
+                    fadeIn(LinerMotion.easeOutTween(fastDuration)) togetherWith
+                        fadeOut(LinerMotion.easeOutTween(fastDuration))
+                },
+                label = "playlistDownloadState"
+            ) { key ->
+                Box(contentAlignment = Alignment.Center) {
+                    when (key) {
+                        1 -> {
+                            val rawProgress = if (tracks.isNotEmpty()) downloadedCount.toFloat() / tracks.size else 0f
+                            val progress by animateFloatAsState(
+                                targetValue = rawProgress,
+                                animationSpec = LinerMotion.easeOutTween(if (reducedMotion) 0 else 180),
+                                label = "playlistDownloadProgress"
+                            )
+                            if (progress <= 0f) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    strokeWidth = 2.dp,
+                                    color = LinerColors.TextPrimary
+                                )
+                            } else {
+                                CircularProgressIndicator(
+                                    progress = { progress },
+                                    modifier = Modifier.size(20.dp),
+                                    strokeWidth = 2.dp,
+                                    color = LinerColors.TextPrimary,
+                                    trackColor = Color.White.copy(alpha = 0.15f)
+                                )
+                            }
+                            Icon(
+                                painter = painterResource(R.drawable.ic_mgc_close_line),
+                                contentDescription = "Отменить загрузку плейлиста",
+                                tint = Color.White.copy(alpha = 0.75f),
+                                modifier = Modifier.size(11.dp)
+                            )
+                        }
+                        2 -> Icon(
+                            painter = painterResource(R.drawable.ic_mgc_check_line),
+                            contentDescription = "Плейлист скачан",
+                            tint = LinerColors.AccentPrimary,
+                            modifier = Modifier.size(19.dp)
                         )
-                    } else {
-                        CircularProgressIndicator(
-                            progress = { progress },
-                            modifier = Modifier.size(20.dp),
-                            strokeWidth = 2.dp,
-                            color = LinerColors.TextPrimary,
-                            trackColor = Color.White.copy(alpha = 0.15f)
+                        else -> Icon(
+                            painter = painterResource(R.drawable.ic_mgc_download_line),
+                            contentDescription = "Скачать весь плейлист",
+                            tint = if (tracks.isNotEmpty()) {
+                                LinerColors.TextPrimary
+                            } else {
+                                LinerColors.TextTertiary
+                            },
+                            modifier = Modifier.size(19.dp)
                         )
                     }
-                    Icon(
-                        painter = painterResource(R.drawable.ic_mgc_close_line),
-                        contentDescription = "Отменить загрузку плейлиста",
-                        tint = Color.White.copy(alpha = 0.75f),
-                        modifier = Modifier.size(11.dp)
-                    )
                 }
-                allDownloaded -> Icon(
-                    painter = painterResource(R.drawable.ic_mgc_check_line),
-                    contentDescription = "Плейлист скачан",
-                    tint = LinerColors.AccentPrimary,
-                    modifier = Modifier.size(19.dp)
-                )
-                else -> Icon(
-                    painter = painterResource(R.drawable.ic_mgc_download_line),
-                    contentDescription = "Скачать весь плейлист",
-                    tint = if (tracks.isNotEmpty()) {
-                        LinerColors.TextPrimary
-                    } else {
-                        LinerColors.TextTertiary
-                    },
-                    modifier = Modifier.size(19.dp)
-                )
             }
         }
     }

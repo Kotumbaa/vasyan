@@ -3,6 +3,7 @@ package `fun`.tryliner.android.core.network
 import `fun`.tryliner.android.core.crypto.PowTimeoutException
 import `fun`.tryliner.android.core.crypto.ProofOfWorkSolver
 import `fun`.tryliner.android.core.crypto.WasmRequestSigner
+import `fun`.tryliner.android.core.lyrics.SseEventParser
 import `fun`.tryliner.android.core.model.AlbumDetails
 import `fun`.tryliner.android.core.model.ApiError
 import `fun`.tryliner.android.core.model.ApiErrorBody
@@ -11,10 +12,11 @@ import `fun`.tryliner.android.core.model.AuthSession
 import `fun`.tryliner.android.core.model.AuthUser
 import `fun`.tryliner.android.core.model.CatalogPlaylistDetails
 import `fun`.tryliner.android.core.model.DailyMixesResponse
+import `fun`.tryliner.android.core.model.MyWaveRequest
+import `fun`.tryliner.android.core.model.MyWaveResponse
 import `fun`.tryliner.android.core.model.LikedTracksPage
 import `fun`.tryliner.android.core.model.LyricsSearchResult
 import `fun`.tryliner.android.core.model.LyricsStreamEvent
-import `fun`.tryliner.android.core.model.LyricsStreamEventSerializer
 import `fun`.tryliner.android.core.model.PlaybackHistoryResponse
 import `fun`.tryliner.android.core.model.PopularTracksResponse
 import `fun`.tryliner.android.core.model.PowChallenge
@@ -72,6 +74,13 @@ data class SpotifyImportResponse(
 data class EdgeKeyResponse(
     val key: String,
     val rotatesAt: String = "",
+)
+
+@Serializable
+data class ResolvedRelayStream(
+    val url: String,
+    val isHls: Boolean = false,
+    val source: String = "relay",
 )
 
 @Serializable
@@ -390,6 +399,23 @@ class LinerApiClient(
     suspend fun importSpotify(url: String): SpotifyImportResponse =
         request("GET", "/v1/catalog/import/spotify?url=${urlEncode(url)}")
 
+    suspend fun resolveStream(
+        videoId: String,
+        title: String? = null,
+        artist: String? = null,
+    ): ResolvedRelayStream {
+        val query = buildString {
+            append("videoId=").append(urlEncode(videoId))
+            if (!title.isNullOrBlank()) {
+                append("&title=").append(urlEncode(title))
+            }
+            if (!artist.isNullOrBlank()) {
+                append("&artist=").append(urlEncode(artist))
+            }
+        }
+        return request("GET", "/v1/stream/resolve?$query")
+    }
+
     // ---- Lyrics ----
 
     suspend fun searchLyrics(
@@ -430,40 +456,20 @@ class LinerApiClient(
         }
         val path = "/v1/tracks/${urlEncode(trackId)}/lyrics$hintQuery"
         val requestId = UUID.randomUUID().toString()
+        val extraHeaders = mapOf(
+            "Accept" to "application/json, text/event-stream",
+            "x-session-id" to trackId,
+        )
 
-        var accessToken = getValidAccessToken()
-        var response = executeRaw(
+        val response = executeWithRecovery(
             method = "GET",
             path = path,
             body = null,
-            accessToken = accessToken,
+            allowRefresh = true,
+            edgeRetry = true,
             requestId = requestId,
-            extraHeaders = mapOf(
-                "Accept" to "application/json, text/event-stream",
-                "x-session-id" to trackId,
-            ),
+            extraHeaders = extraHeaders,
         )
-
-        if (response.code == 401) {
-            response.close()
-            val refreshed = refreshAccessTokenIfNeeded(failedToken = accessToken)
-            if (refreshed != null) {
-                accessToken = refreshed
-                response = executeRaw(
-                    method = "GET",
-                    path = path,
-                    body = null,
-                    accessToken = accessToken,
-                    requestId = requestId,
-                    extraHeaders = mapOf(
-                        "Accept" to "application/json, text/event-stream",
-                        "x-session-id" to trackId,
-                    ),
-                )
-            } else {
-                throw ApiError(401, "Unauthorized", requestId = requestId)
-            }
-        }
 
         response.use { res ->
             syncDateHeader(res)
@@ -483,35 +489,26 @@ class LinerApiClient(
                     LyricsStreamEvent.Done(
                         cached = true,
                         status = "not_found",
-                        instrumental = if (parsed?.instrumental == true) true else null,
+                        instrumental = parsed?.instrumental == true,
                     ),
                 )
                 return@flow
             }
 
-            val source = body.source()
-            val dataLines = mutableListOf<String>()
-            while (!source.exhausted()) {
-                val line = source.readUtf8Line() ?: break
-                if (line.isEmpty()) {
-                    if (dataLines.isNotEmpty()) {
-                        val payload = dataLines.joinToString("\n")
-                        dataLines.clear()
-                        val event = runCatching {
-                            json.decodeFromString(LyricsStreamEventSerializer, payload)
-                        }.getOrNull()
-                        if (event != null) emit(event)
+            val parser = SseEventParser()
+            body.charStream().use { reader ->
+                val buffer = CharArray(4096)
+                while (true) {
+                    val count = reader.read(buffer)
+                    if (count < 0) break
+                    if (count == 0) continue
+                    for (frame in parser.feed(String(buffer, 0, count))) {
+                        SseEventParser.decodeLyricsEvent(frame, json)?.let { emit(it) }
                     }
-                } else if (line.startsWith("data:")) {
-                    dataLines.add(line.removePrefix("data:").trim())
                 }
             }
-            if (dataLines.isNotEmpty()) {
-                val payload = dataLines.joinToString("\n")
-                val event = runCatching {
-                    json.decodeFromString(LyricsStreamEventSerializer, payload)
-                }.getOrNull()
-                if (event != null) emit(event)
+            for (frame in parser.flush()) {
+                SseEventParser.decodeLyricsEvent(frame, json)?.let { emit(it) }
             }
         }
     }.flowOn(Dispatchers.IO)
@@ -538,6 +535,20 @@ class LinerApiClient(
 
     suspend fun getDailyMixes(): DailyMixesResponse =
         request("GET", "/v1/me/recommendations/daily-mixes")
+
+    suspend fun getMyWave(
+        vibe: String = "all",
+        excludeIds: List<String> = emptyList(),
+        limit: Int = 20,
+    ): MyWaveResponse =
+        request(
+            method = "POST",
+            path = "/v1/me/recommendations/wave",
+            body = json.encodeToString(
+                MyWaveRequest.serializer(),
+                MyWaveRequest(vibe = vibe, excludeIds = excludeIds, limit = limit),
+            ),
+        )
 
     // ---- Internal Request Execution ----
 
@@ -637,17 +648,44 @@ class LinerApiClient(
         edgeRetry: Boolean,
     ): String {
         val requestId = UUID.randomUUID().toString()
+        val response = executeWithRecovery(
+            method = method,
+            path = path,
+            body = body,
+            allowRefresh = allowRefresh,
+            edgeRetry = edgeRetry,
+            requestId = requestId,
+        )
+
+        return response.use { res ->
+            syncDateHeader(res)
+            if (!res.isSuccessful) {
+                val cfMitigated = res.code == 403 && res.header("cf-mitigated") == "challenge"
+                throw toApiError(res, requestId, cfMitigated = cfMitigated)
+            }
+            if (res.code == 204) "" else res.body?.string().orEmpty()
+        }
+    }
+
+    private suspend fun executeWithRecovery(
+        method: String,
+        path: String,
+        body: String?,
+        allowRefresh: Boolean,
+        edgeRetry: Boolean,
+        requestId: String,
+        extraHeaders: Map<String, String> = emptyMap(),
+    ): Response {
         val isAuthPath = path.startsWith("/v1/auth/")
         var accessToken = if (allowRefresh && !isAuthPath) getValidAccessToken() else null
-
-        var response = executeRaw(method, path, body, accessToken, requestId)
+        var response = executeRaw(method, path, body, accessToken, requestId, extraHeaders)
 
         if (response.code == 401 && allowRefresh && !isAuthPath) {
             response.close()
             val nextToken = refreshAccessTokenIfNeeded(failedToken = accessToken)
             if (nextToken != null) {
                 accessToken = nextToken
-                response = executeRaw(method, path, body, accessToken, requestId)
+                response = executeRaw(method, path, body, accessToken, requestId, extraHeaders)
             } else {
                 throw ApiError(401, "Unauthorized", requestId = requestId)
             }
@@ -657,7 +695,6 @@ class LinerApiClient(
             val cfMitigated = response.header("cf-mitigated") == "challenge"
             val hasInstance = response.header("x-instance") != null
             if (cfMitigated || !hasInstance) {
-                // Read body & headers before closing so we never lose the real server/Cloudflare error.
                 val snapshotError = response.use { res ->
                     syncDateHeader(res)
                     toApiError(res, requestId, cfMitigated = cfMitigated)
@@ -670,21 +707,24 @@ class LinerApiClient(
                 }
 
                 if (recovered) {
-                    response = executeRaw(method, path, body, accessToken, requestId)
+                    response = executeRaw(method, path, body, accessToken, requestId, extraHeaders)
+                    if (response.code == 401 && allowRefresh && !isAuthPath) {
+                        response.close()
+                        val nextToken = refreshAccessTokenIfNeeded(failedToken = accessToken)
+                        if (nextToken != null) {
+                            accessToken = nextToken
+                            response = executeRaw(method, path, body, accessToken, requestId, extraHeaders)
+                        } else {
+                            throw ApiError(401, "Unauthorized", requestId = requestId)
+                        }
+                    }
                 } else {
                     throw snapshotError
                 }
             }
         }
 
-        return response.use { res ->
-            syncDateHeader(res)
-            if (!res.isSuccessful) {
-                val cfMitigated = res.code == 403 && res.header("cf-mitigated") == "challenge"
-                throw toApiError(res, requestId, cfMitigated = cfMitigated)
-            }
-            if (res.code == 204) "" else res.body?.string().orEmpty()
-        }
+        return response
     }
 
     private suspend fun requestHumanCheckAndSaveCookie(action: String, mode: String): Boolean {

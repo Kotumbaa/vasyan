@@ -1,6 +1,19 @@
 package `fun`.tryliner.android.ui.login
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import `fun`.tryliner.android.ui.theme.LinerMotion
+import `fun`.tryliner.android.ui.theme.pressScale
+import `fun`.tryliner.android.ui.theme.rememberReducedMotion
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -56,6 +69,9 @@ fun LoginScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var passwordVisible by remember { mutableStateOf(false) }
+    val reducedMotion = rememberReducedMotion()
+    val fastDuration = if (reducedMotion) 0 else LinerMotion.DURATION_FAST
+    val normalDuration = if (reducedMotion) 0 else LinerMotion.DURATION_NORMAL
 
     Box(
         modifier = Modifier
@@ -96,15 +112,24 @@ fun LoginScreen(
             }
 
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    text = when (state.mode) {
-                        AuthMode.LOGIN -> "Вход в vasyan"
-                        AuthMode.REGISTER -> "Регистрация в vasyan"
-                        AuthMode.TOKEN_IMPORT -> "Вход по токену"
+                AnimatedContent(
+                    targetState = state.mode,
+                    transitionSpec = {
+                        fadeIn(LinerMotion.easeOutTween(normalDuration)) togetherWith
+                            fadeOut(LinerMotion.easeOutTween(fastDuration))
                     },
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = LinerColors.TextPrimary
-                )
+                    label = "loginTitle"
+                ) { mode ->
+                    Text(
+                        text = when (mode) {
+                            AuthMode.LOGIN -> "Вход в vasyan"
+                            AuthMode.REGISTER -> "Регистрация в vasyan"
+                            AuthMode.TOKEN_IMPORT -> "Вход по токену"
+                        },
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = LinerColors.TextPrimary
+                    )
+                }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = "Ваша музыка, синхронизированная везде",
@@ -124,7 +149,10 @@ fun LoginScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(20.dp),
+                        .padding(20.dp)
+                        .animateContentSize(
+                            animationSpec = if (reducedMotion) tween(0) else LinerMotion.appleDefaultSpring()
+                        ),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     val fieldColors = OutlinedTextFieldDefaults.colors(
@@ -241,7 +269,13 @@ fun LoginScreen(
                         )
                     }
 
-                    if (!state.errorMessage.isNullOrBlank()) {
+                    AnimatedVisibility(
+                        visible = !state.errorMessage.isNullOrBlank(),
+                        enter = expandVertically(LinerMotion.easeOutTween(fastDuration)) +
+                            fadeIn(LinerMotion.easeOutTween(fastDuration)),
+                        exit = shrinkVertically(LinerMotion.easeOutTween(fastDuration)) +
+                            fadeOut(LinerMotion.easeOutTween(fastDuration))
+                    ) {
                         Text(
                             text = state.errorMessage.orEmpty(),
                             style = MaterialTheme.typography.bodyMedium,

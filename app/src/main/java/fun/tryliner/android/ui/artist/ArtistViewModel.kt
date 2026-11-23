@@ -8,6 +8,7 @@ import `fun`.tryliner.android.core.model.ArtistDetails
 import `fun`.tryliner.android.core.model.SearchResult
 import `fun`.tryliner.android.core.model.Track
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -29,13 +30,16 @@ class ArtistViewModel(
     private val _state = MutableStateFlow(ArtistUiState())
     val state: StateFlow<ArtistUiState> = _state.asStateFlow()
 
+    private var loadJob: Job? = null
+
     init {
         load()
     }
 
     fun load() {
+        loadJob?.cancel()
         _state.update { it.copy(isLoading = true, errorMessage = null) }
-        viewModelScope.launch {
+        loadJob = viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
                     val resolvedId = if (artistId.startsWith("name:")) {
@@ -44,7 +48,7 @@ class ArtistViewModel(
                         searchRes.items
                             .filterIsInstance<SearchResult.ArtistItem>()
                             .firstOrNull()?.id
-                            ?: error("Artist \"$queryName\" not found")
+                            ?: error("Артист «$queryName» не найден")
                     } else {
                         artistId
                     }
@@ -61,7 +65,7 @@ class ArtistViewModel(
                 _state.update {
                     it.copy(
                         isLoading = false,
-                        errorMessage = err.message ?: "Failed to load artist",
+                        errorMessage = err.message ?: "Не удалось загрузить артиста",
                     )
                 }
             }

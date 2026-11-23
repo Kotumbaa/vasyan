@@ -1,7 +1,21 @@
 package `fun`.tryliner.android.ui.library
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
+import `fun`.tryliner.android.ui.theme.LinerMotion
+import `fun`.tryliner.android.ui.theme.pressScale
+import `fun`.tryliner.android.ui.theme.rememberReducedMotion
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -86,6 +100,7 @@ import `fun`.tryliner.android.ui.components.LinerChip
 import `fun`.tryliner.android.ui.components.LinerCoverArt
 import `fun`.tryliner.android.ui.components.LinerPanel
 import `fun`.tryliner.android.ui.components.TrackRow
+import `fun`.tryliner.android.ui.components.formatTrackCountRu
 import `fun`.tryliner.android.ui.theme.LinerColors
 import `fun`.tryliner.android.ui.theme.LinerShapes
 
@@ -101,9 +116,24 @@ fun LibraryScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val likedIds by viewModel.likedTrackIds.collectAsStateWithLifecycle()
-    val playbackState by viewModel.playbackState.collectAsStateWithLifecycle()
-    val currentTrackId = playbackState.currentTrack?.id
+    val currentTrackIdFlow = remember(viewModel) {
+        viewModel.playbackState.map { it.currentTrack?.id }.distinctUntilChanged()
+    }
+    val currentTrackId by currentTrackIdFlow.collectAsStateWithLifecycle(
+        initialValue = viewModel.playbackState.value.currentTrack?.id
+    )
+    val reducedMotion = rememberReducedMotion()
+    val fastDuration = if (reducedMotion) 0 else LinerMotion.DURATION_FAST
+    val normalDuration = if (reducedMotion) 0 else LinerMotion.DURATION_NORMAL
     val filteredLikedTracks = state.filteredLikedTracks
+    val likedTrackKeys = remember(filteredLikedTracks) {
+        val counts = HashMap<String, Int>(filteredLikedTracks.size)
+        filteredLikedTracks.map { track ->
+            val occ = counts.getOrDefault(track.id, 0)
+            counts[track.id] = occ + 1
+            if (occ == 0) "liked_${track.id}" else "liked_${track.id}_dup$occ"
+        }
+    }
     val downloadedTracks by viewModel.downloadedTracks.collectAsStateWithLifecycle()
     val hasDownloads = downloadedTracks.isNotEmpty()
     val haptics = LocalHapticFeedback.current
@@ -117,6 +147,11 @@ fun LibraryScreen(
     } else {
         statusBarTop + 76.dp
     }
+    val contentPhase = when {
+        state.isLoading && state.playlists.isEmpty() && state.likedTracks.isEmpty() && !hasDownloads -> 0
+        state.errorMessage != null && state.playlists.isEmpty() && state.likedTracks.isEmpty() && !hasDownloads -> 1
+        else -> 2
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         Box(
@@ -124,54 +159,73 @@ fun LibraryScreen(
                 .fillMaxSize()
                 .hazeSource(state = headerHazeState)
         ) {
-            when {
-                state.isLoading && state.playlists.isEmpty() && state.likedTracks.isEmpty() && !hasDownloads -> {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(top = topBarHeightDp + 12.dp)
-                    ) {
-                        TrackListSkeleton(count = 8)
-                    }
-                }
-            state.errorMessage != null && state.playlists.isEmpty() && state.likedTracks.isEmpty() && !hasDownloads -> {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 16.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    LinerPanel(
-                        shape = LinerShapes.Panel,
-                        containerColor = Color.White.copy(alpha = 0.07f),
-                        borderColor = Color.Transparent
-                    ) {
+            Crossfade(
+                targetState = contentPhase,
+                animationSpec = LinerMotion.easeOutTween(normalDuration),
+                label = "libraryContentPhase"
+            ) { phase ->
+                when (phase) {
+                    0 -> {
                         Column(
-                            modifier = Modifier.padding(24.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(top = topBarHeightDp + 12.dp)
                         ) {
-                            Text(
-                                text = state.errorMessage.orEmpty(),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = LinerColors.TextSecondary
-                            )
-                            Spacer(modifier = Modifier.height(10.dp))
-                            TextButton(onClick = viewModel::refresh) {
-                                Text("Повторить", color = LinerColors.AccentPrimary)
+                            TrackListSkeleton(count = 8)
+                        }
+                    }
+                    1 -> {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 16.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            LinerPanel(
+                                shape = LinerShapes.Panel,
+                                containerColor = Color.White.copy(alpha = 0.07f),
+                                borderColor = Color.Transparent
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(24.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Text(
+                                        text = state.errorMessage.orEmpty(),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = LinerColors.TextSecondary
+                                    )
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    TextButton(onClick = viewModel::refresh) {
+                                        Text("Повторить", color = LinerColors.AccentPrimary)
+                                    }
+                                }
                             }
                         }
                     }
-                }
-            }
-            else -> {
-                PullToRefreshBox(
-                    isRefreshing = state.isLoading && (state.playlists.isNotEmpty() || state.likedTracks.isNotEmpty()),
-                    onRefresh = {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        viewModel.refresh()
-                    },
-                    modifier = Modifier.fillMaxSize()
-                ) {
+                    else -> {
+                        val pullRefreshState = rememberPullToRefreshState()
+                        val isRefreshing = state.isLoading && (state.playlists.isNotEmpty() || state.likedTracks.isNotEmpty())
+                        PullToRefreshBox(
+                            isRefreshing = isRefreshing,
+                            onRefresh = {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                viewModel.refresh()
+                            },
+                            state = pullRefreshState,
+                            indicator = {
+                                PullToRefreshDefaults.Indicator(
+                                    state = pullRefreshState,
+                                    isRefreshing = isRefreshing,
+                                    containerColor = LinerColors.BgElevated,
+                                    color = LinerColors.TextPrimary,
+                                    modifier = Modifier
+                                        .align(Alignment.TopCenter)
+                                        .padding(top = topBarHeightDp + 6.dp)
+                                )
+                            },
+                            modifier = Modifier.fillMaxSize()
+                        ) {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(
@@ -424,7 +478,7 @@ fun LibraryScreen(
                                     horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Rounded.Search,
+                                        painter = painterResource(R.drawable.ic_mgc_search_line),
                                         contentDescription = null,
                                         tint = Color.White.copy(alpha = 0.40f),
                                         modifier = Modifier.size(28.dp)
@@ -439,7 +493,7 @@ fun LibraryScreen(
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
                                     TextButton(onClick = viewModel::clearSearchQuery) {
-                                        Text("Clear search", color = LinerColors.AccentPrimary)
+                                        Text("Очистить поиск", color = LinerColors.AccentPrimary)
                                     }
                                 }
                             }
@@ -447,7 +501,7 @@ fun LibraryScreen(
                             val likedTotal = filteredLikedTracks.size
                             itemsIndexed(
                                 items = filteredLikedTracks,
-                                key = { index, track -> "liked_${track.id}_$index" }
+                                key = { index, _ -> likedTrackKeys.getOrElse(index) { "liked_$index" } }
                             ) { index, track ->
                                 val panelShape = when {
                                     likedTotal == 1 -> LinerShapes.Item
@@ -482,7 +536,8 @@ fun LibraryScreen(
                 }
                 }
             }
-        }
+            }
+            }
         }
 
         // Frosted-glass translucent + backdrop blur top bar (lighter glass tint)
@@ -568,11 +623,15 @@ private fun GlassCircleIconButton(
     contentDescription: String,
     onClick: () -> Unit
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
     Surface(
         onClick = onClick,
+        interactionSource = interactionSource,
         shape = CircleShape,
         color = LinerColors.HeroGlass,
-        modifier = Modifier.size(36.dp)
+        modifier = Modifier
+            .size(36.dp)
+            .pressScale(interactionSource)
     ) {
         Box(contentAlignment = Alignment.Center) {
             Icon(
@@ -589,10 +648,13 @@ private fun GlassCircleIconButton(
 private fun NewPlaylistPillButton(
     onClick: () -> Unit
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
     Surface(
         onClick = onClick,
+        interactionSource = interactionSource,
         shape = LinerShapes.HeroButton,
-        color = LinerColors.HeroGlass
+        color = LinerColors.HeroGlass,
+        modifier = Modifier.pressScale(interactionSource)
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
@@ -623,6 +685,8 @@ private fun PlaylistSearchPill(
     onClear: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val reducedMotion = rememberReducedMotion()
+    val fastDuration = if (reducedMotion) 0 else LinerMotion.DURATION_FAST
     OutlinedTextField(
         value = query,
         onValueChange = onQueryChange,
@@ -642,7 +706,11 @@ private fun PlaylistSearchPill(
             )
         },
         trailingIcon = {
-            if (query.isNotEmpty()) {
+            AnimatedVisibility(
+                visible = query.isNotEmpty(),
+                enter = fadeIn(LinerMotion.easeOutTween(fastDuration)),
+                exit = fadeOut(LinerMotion.easeOutTween(fastDuration))
+            ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(2.dp),
@@ -689,9 +757,14 @@ private fun LikedTracksHeroCard(
     onPlay: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val cardInteraction = remember { MutableInteractionSource() }
+    val playInteraction = remember { MutableInteractionSource() }
     Surface(
         onClick = onOpen,
-        modifier = modifier.fillMaxWidth(),
+        interactionSource = cardInteraction,
+        modifier = modifier
+            .fillMaxWidth()
+            .pressScale(cardInteraction, targetScale = 0.98f),
         shape = LinerShapes.BigArt,
         color = Color.White.copy(alpha = 0.07f)
     ) {
@@ -718,7 +791,7 @@ private fun LikedTracksHeroCard(
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = if (trackCount > 0) "$trackCount tracks" else "Your favorite songs",
+                    text = if (trackCount > 0) formatTrackCountRu(trackCount) else "Ваши любимые треки",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.White.copy(alpha = 0.65f),
                     maxLines = 1,
@@ -730,8 +803,10 @@ private fun LikedTracksHeroCard(
 
             Surface(
                 onClick = onPlay,
+                interactionSource = playInteraction,
                 shape = RoundedCornerShape(999.dp),
-                color = Color(0xFFFFFFFF)
+                color = Color(0xFFFFFFFF),
+                modifier = Modifier.pressScale(playInteraction)
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
@@ -740,7 +815,7 @@ private fun LikedTracksHeroCard(
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.PlayArrow,
-                        contentDescription = "Play liked tracks",
+                        contentDescription = "Слушать понравившиеся",
                         tint = Color(0xFF0D0F14),
                         modifier = Modifier.size(18.dp)
                     )
@@ -760,11 +835,17 @@ private fun PlaylistCarouselCard(
     playlist: UserPlaylist,
     onClick: () -> Unit
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
     Column(
         modifier = Modifier
             .width(132.dp)
+            .pressScale(interactionSource, targetScale = 0.96f)
             .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick
+            )
     ) {
         LinerCoverArt(
             url = playlist.coverUrls?.firstOrNull(),
@@ -782,7 +863,7 @@ private fun PlaylistCarouselCard(
         )
         Spacer(modifier = Modifier.height(2.dp))
         Text(
-            text = playlist.trackCount?.let { "$it tracks" } ?: "Playlist",
+            text = playlist.trackCount?.let { formatTrackCountRu(it) } ?: "Плейлист",
             style = MaterialTheme.typography.bodySmall,
             color = LinerColors.TextTertiary,
             maxLines = 1,
@@ -798,11 +879,19 @@ private fun RecentTrackCarouselCard(
     onClick: () -> Unit
 ) {
     val coverShape = RoundedCornerShape(12.dp)
+    val interactionSource = remember { MutableInteractionSource() }
+    val reducedMotion = rememberReducedMotion()
+    val fastDuration = if (reducedMotion) 0 else LinerMotion.DURATION_FAST
     Column(
         modifier = Modifier
             .width(124.dp)
+            .pressScale(interactionSource, targetScale = 0.96f)
             .clip(coverShape)
-            .clickable(onClick = onClick)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick
+            )
     ) {
         Box(contentAlignment = Alignment.Center) {
             LinerCoverArt(
@@ -811,12 +900,16 @@ private fun RecentTrackCarouselCard(
                 size = 124.dp,
                 shape = coverShape
             )
-            if (isPlayingCurrent) {
+            androidx.compose.animation.AnimatedVisibility(
+                visible = isPlayingCurrent,
+                enter = fadeIn(LinerMotion.easeOutTween(fastDuration)),
+                exit = fadeOut(LinerMotion.easeOutTween(fastDuration))
+            ) {
                 Box(
                     modifier = Modifier
                         .size(124.dp)
                         .clip(coverShape)
-                        .background(Color.Black.copy(alpha = 0.52f)),
+                        .background(LinerColors.BgCanvas.copy(alpha = 0.52f)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
@@ -840,7 +933,7 @@ private fun RecentTrackCarouselCard(
         )
         Spacer(modifier = Modifier.height(2.dp))
         Text(
-            text = track.artistNames.ifBlank { "Unknown Artist" },
+            text = track.artistNames.ifBlank { "Неизвестный артист" },
             style = MaterialTheme.typography.bodySmall,
             color = LinerColors.TextTertiary,
             maxLines = 1,
@@ -858,6 +951,7 @@ private fun CreatePlaylistDialog(
 ) {
     var title by rememberSaveable { mutableStateOf("") }
     var description by rememberSaveable { mutableStateOf("") }
+    val reducedMotion = rememberReducedMotion()
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -869,6 +963,9 @@ private fun CreatePlaylistDialog(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(20.dp)
+                    .animateContentSize(
+                        animationSpec = if (reducedMotion) tween(0) else LinerMotion.appleDefaultSpring()
+                    )
             ) {
                 Text(
                     text = "Новый плейлист",

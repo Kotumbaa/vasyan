@@ -88,7 +88,7 @@ sealed interface LyricsStreamEvent {
         val type: String = "provider",
         val provider: String,
         val status: String = "not_found",
-        val instrumental: Boolean? = null,
+        val instrumental: Boolean = false,
         val durationMs: Long? = null,
     ) : LyricsStreamEvent
 
@@ -107,7 +107,7 @@ sealed interface LyricsStreamEvent {
         val cached: Boolean = false,
         val best: LyricsBestResult? = null,
         val status: String? = null,
-        val instrumental: Boolean? = null,
+        val instrumental: Boolean = false,
     ) : LyricsStreamEvent
 }
 
