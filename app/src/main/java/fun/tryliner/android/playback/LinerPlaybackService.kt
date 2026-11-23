@@ -1,7 +1,11 @@
 package `fun`.tryliner.android.playback
 
 import android.content.Intent
+import android.media.audiofx.DynamicsProcessing
+import android.media.audiofx.LoudnessEnhancer
+import android.os.Build
 import androidx.annotation.OptIn
+import kotlin.math.pow
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Player
@@ -37,6 +41,8 @@ class LinerPlaybackService : MediaSessionService() {
     private var serviceScope: CoroutineScope? = null
     private var exoPlayerListener: Player.Listener? = null
     private var playerControllerRef: PlayerController? = null
+    private var loudnessEnhancer: LoudnessEnhancer? = null
+    private var dynamicsProcessing: DynamicsProcessing? = null
 
     @OptIn(UnstableApi::class)
     override fun onCreate() {
@@ -88,6 +94,8 @@ class LinerPlaybackService : MediaSessionService() {
             .build()
         exoPlayer = player
 
+        setupAudioNormalization(player)
+
         val remote = RemoteMediaPlayer(lanConnectManager)
         remotePlayer = remote
 
@@ -99,6 +107,9 @@ class LinerPlaybackService : MediaSessionService() {
             if (session != null && session.player !== player) {
                 session.setPlayer(player)
             }
+        }
+        playerController.onApplyLoudnessDb = { loudnessDb ->
+            applyLoudnessNormalization(player, loudnessDb)
         }
 
         val listener = object : Player.Listener {
@@ -181,7 +192,12 @@ class LinerPlaybackService : MediaSessionService() {
         serviceScope?.cancel()
         serviceScope = null
         playerControllerRef?.onBeforeLocalPlayback = null
+        playerControllerRef?.onApplyLoudnessDb = null
         playerControllerRef = null
+        runCatching { loudnessEnhancer?.release() }
+        loudnessEnhancer = null
+        runCatching { dynamicsProcessing?.release() }
+        dynamicsProcessing = null
         exoPlayerListener?.let { listener ->
             exoPlayer?.removeListener(listener)
         }
@@ -199,6 +215,70 @@ class LinerPlaybackService : MediaSessionService() {
         chunkedDataSourceFactory?.release()
         chunkedDataSourceFactory = null
         super.onDestroy()
+    }
+
+    private fun setupAudioNormalization(player: ExoPlayer) {
+        val sessionId = player.audioSessionId
+        if (sessionId == C.AUDIO_SESSION_ID_UNSET || sessionId == 0) return
+
+        runCatching {
+            loudnessEnhancer = LoudnessEnhancer(sessionId).apply {
+                setTargetGain(0)
+                enabled = true
+            }
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            runCatching {
+                val config = DynamicsProcessing.Config.Builder(
+                    DynamicsProcessing.VARIANT_FAVOR_FREQUENCY_RESOLUTION,
+                    /* channelCount = */ 2,
+                    /* preEqInUse = */ false,
+                    /* preEqBandCount = */ 0,
+                    /* mbcInUse = */ false,
+                    /* mbcBandCount = */ 0,
+                    /* postEqInUse = */ false,
+                    /* postEqBandCount = */ 0,
+                    /* limiterInUse = */ true,
+                ).build()
+                dynamicsProcessing = DynamicsProcessing(/* priority = */ 0, sessionId, config).apply {
+                    setLimiterAllChannelsTo(
+                        DynamicsProcessing.Limiter(
+                            /* inUse = */ true,
+                            /* enabled = */ true,
+                            /* linkGroup = */ 0,
+                            /* attackTime = */ 2.0f,
+                            /* releaseTime = */ 60.0f,
+                            /* ratio = */ 4.0f,
+                            /* threshold = */ -1.5f,
+                            /* postGain = */ 0.0f,
+                        )
+                    )
+                    enabled = true
+                }
+            }
+        }
+    }
+
+    private fun applyLoudnessNormalization(player: ExoPlayer, loudnessDb: Float?) {
+        if (loudnessEnhancer == null && dynamicsProcessing == null) {
+            setupAudioNormalization(player)
+        }
+        if (loudnessDb != null && loudnessDb.isFinite()) {
+            if (loudnessDb > 0f) {
+                val linear = 10f.pow(-loudnessDb / 20f).coerceIn(0.25f, 1.0f)
+                player.volume = linear
+                runCatching { loudnessEnhancer?.setTargetGain(0) }
+            } else {
+                player.volume = 1.0f
+                val boostMb = (-loudnessDb * 100f).toInt().coerceIn(0, 800)
+                runCatching { loudnessEnhancer?.setTargetGain(boostMb) }
+            }
+        } else {
+            // SoundCloud / local / offline tracks without YT loudnessDb: gentle lift + limiter
+            player.volume = 0.92f
+            runCatching { loudnessEnhancer?.setTargetGain(250) }
+        }
     }
 
     companion object {

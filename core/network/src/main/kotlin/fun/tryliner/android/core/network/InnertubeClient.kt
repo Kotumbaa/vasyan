@@ -51,6 +51,7 @@ data class ResolvedAudioStream(
     val itag: Int,
     val expiresAt: String? = null,
     val contentLength: Long? = null,
+    val loudnessDb: Float? = null,
 )
 
 class InnertubeException(
@@ -368,7 +369,8 @@ class InnertubeClient(
         val best = selectBestAudioFormat(formats, preferredCodec)
             ?: throw InnertubeException("${profile.clientName} returned no direct audio formats.", 502)
 
-        val resolved = toResolvedStream(best)
+        val loudnessDb = extractLoudnessDb(response)
+        val resolved = toResolvedStream(best, loudnessDb)
         if (verifyReachable) {
             assertStreamReachable(resolved.url, resolved.contentLength)
         }
@@ -515,7 +517,15 @@ class InnertubeClient(
         return formats.maxByOrNull { it.bitrate }
     }
 
-    private fun toResolvedStream(format: AudioFormat): ResolvedAudioStream {
+    private fun extractLoudnessDb(playerResponse: JsonObject): Float? {
+        val audioCfg = playerResponse.obj("playerConfig")?.obj("audioConfig") ?: return null
+        val raw = audioCfg.str("loudnessDb")?.toFloatOrNull()
+            ?: (audioCfg["loudnessDb"] as? JsonPrimitive)?.contentOrNull?.toFloatOrNull()
+            ?: (audioCfg["perceptualLoudnessDb"] as? JsonPrimitive)?.contentOrNull?.toFloatOrNull()
+        return raw?.takeIf { it.isFinite() && it in -40f..40f }
+    }
+
+    private fun toResolvedStream(format: AudioFormat, loudnessDb: Float? = null): ResolvedAudioStream {
         val isOpus = format.mimeType.contains("opus", ignoreCase = true) ||
             format.mimeType.contains("webm", ignoreCase = true)
         val expiresAt = format.url.toHttpUrlOrNull()
@@ -531,6 +541,7 @@ class InnertubeClient(
             itag = format.itag,
             expiresAt = expiresAt,
             contentLength = format.contentLength,
+            loudnessDb = loudnessDb,
         )
     }
 

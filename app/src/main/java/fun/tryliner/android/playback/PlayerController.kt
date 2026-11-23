@@ -93,6 +93,7 @@ class PlayerController(
     val state: StateFlow<PlaybackUiState> = _state.asStateFlow()
 
     var onBeforeLocalPlayback: (() -> Unit)? = null
+    var onApplyLoudnessDb: ((Float?) -> Unit)? = null
 
     /** Set by AppContainer; when a track is downloaded, playback uses the local file. */
     var downloadManager: TrackDownloadManager? = null
@@ -123,6 +124,7 @@ class PlayerController(
         val isHls: Boolean,
         val sourceLabel: String,
         val expiresAtMs: Long,
+        val loudnessDb: Float? = null,
     )
 
     private val playerListener = object : Player.Listener {
@@ -604,6 +606,7 @@ class PlayerController(
                 val playUri = Uri.parse(resolvedPlayable.url)
                 val controller = ensureController()
                 onBeforeLocalPlayback?.invoke()
+                onApplyLoudnessDb?.invoke(resolvedPlayable.loudnessDb)
                 val metadata = MediaMetadata.Builder()
                     .setTitle(track.title)
                     .setArtist(track.artistNames)
@@ -748,7 +751,8 @@ class PlayerController(
             url = fresh.url,
             isHls = false,
             sourceLabel = "YT",
-            expiresAtMs = expMs
+            expiresAtMs = expMs,
+            loudnessDb = fresh.loudnessDb
         )
     }
 
