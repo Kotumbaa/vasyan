@@ -11,8 +11,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Visibility
@@ -72,7 +74,9 @@ fun LoginScreen(
         contentAlignment = Alignment.Center
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
@@ -93,13 +97,17 @@ fun LoginScreen(
 
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    text = "Sign in to vasyan",
+                    text = when (state.mode) {
+                        AuthMode.LOGIN -> "Вход в vasyan"
+                        AuthMode.REGISTER -> "Регистрация в vasyan"
+                        AuthMode.TOKEN_IMPORT -> "Вход по токену"
+                    },
                     style = MaterialTheme.typography.headlineMedium,
                     color = LinerColors.TextPrimary
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "Your music, synced everywhere",
+                    text = "Ваша музыка, синхронизированная везде",
                     style = MaterialTheme.typography.bodyMedium,
                     color = LinerColors.TextSecondary
                 )
@@ -131,62 +139,96 @@ fun LoginScreen(
                         cursorColor = LinerColors.TextPrimary
                     )
 
-                    OutlinedTextField(
-                        value = state.email,
-                        onValueChange = viewModel::onEmailChange,
-                        label = { Text("Email") },
-                        singleLine = true,
-                        enabled = !state.isLoading,
-                        shape = LinerShapes.Item,
-                        colors = fieldColors,
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Email,
-                            imeAction = ImeAction.Next
-                        ),
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    if (!state.showTokenImport) {
+                        OutlinedTextField(
+                            value = state.email,
+                            onValueChange = viewModel::onEmailChange,
+                            label = { Text("Email") },
+                            singleLine = true,
+                            enabled = !state.isLoading,
+                            shape = LinerShapes.Item,
+                            colors = fieldColors,
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Email,
+                                imeAction = ImeAction.Next
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
 
-                    OutlinedTextField(
-                        value = state.password,
-                        onValueChange = viewModel::onPasswordChange,
-                        label = { Text("Password") },
-                        singleLine = true,
-                        enabled = !state.isLoading,
-                        shape = LinerShapes.Item,
-                        colors = fieldColors,
-                        visualTransformation = if (passwordVisible) {
-                            VisualTransformation.None
-                        } else {
-                            PasswordVisualTransformation()
-                        },
-                        trailingIcon = {
-                            IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                                Icon(
-                                    imageVector = if (passwordVisible) {
-                                        Icons.Rounded.VisibilityOff
-                                    } else {
-                                        Icons.Rounded.Visibility
-                                    },
-                                    contentDescription = null,
-                                    tint = LinerColors.TextTertiary
-                                )
-                            }
-                        },
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Password,
-                            imeAction = ImeAction.Done
-                        ),
-                        keyboardActions = KeyboardActions(
-                            onDone = { viewModel.login() }
-                        ),
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                        if (state.isRegister) {
+                            OutlinedTextField(
+                                value = state.username,
+                                onValueChange = viewModel::onUsernameChange,
+                                label = { Text("Никнейм (a-z, 0-9, _)") },
+                                singleLine = true,
+                                enabled = !state.isLoading,
+                                shape = LinerShapes.Item,
+                                colors = fieldColors,
+                                keyboardOptions = KeyboardOptions(
+                                    keyboardType = KeyboardType.Ascii,
+                                    imeAction = ImeAction.Next
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            )
 
-                    if (state.showTokenImport) {
+                            OutlinedTextField(
+                                value = state.displayName,
+                                onValueChange = viewModel::onDisplayNameChange,
+                                label = { Text("Отображаемое имя (необязательно)") },
+                                singleLine = true,
+                                enabled = !state.isLoading,
+                                shape = LinerShapes.Item,
+                                colors = fieldColors,
+                                keyboardOptions = KeyboardOptions(
+                                    keyboardType = KeyboardType.Text,
+                                    imeAction = ImeAction.Next
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+
+                        OutlinedTextField(
+                            value = state.password,
+                            onValueChange = viewModel::onPasswordChange,
+                            label = { Text(if (state.isRegister) "Пароль (от 6 символов)" else "Пароль") },
+                            singleLine = true,
+                            enabled = !state.isLoading,
+                            shape = LinerShapes.Item,
+                            colors = fieldColors,
+                            visualTransformation = if (passwordVisible) {
+                                VisualTransformation.None
+                            } else {
+                                PasswordVisualTransformation()
+                            },
+                            trailingIcon = {
+                                IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                                    Icon(
+                                        imageVector = if (passwordVisible) {
+                                            Icons.Rounded.VisibilityOff
+                                        } else {
+                                            Icons.Rounded.Visibility
+                                        },
+                                        contentDescription = null,
+                                        tint = LinerColors.TextTertiary
+                                    )
+                                }
+                            },
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Password,
+                                imeAction = ImeAction.Done
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onDone = {
+                                    if (state.isRegister) viewModel.register() else viewModel.login()
+                                }
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    } else {
                         OutlinedTextField(
                             value = state.sessionJson,
                             onValueChange = viewModel::onSessionJsonChange,
-                            label = { Text("PC Session JSON or accessToken") },
+                            label = { Text("JSON сессии ПК или accessToken") },
                             placeholder = {
                                 Text("{\"accessToken\":\"...\",\"refreshToken\":\"...\"}")
                             },
@@ -210,10 +252,10 @@ fun LoginScreen(
                     Spacer(modifier = Modifier.height(4.dp))
 
                     Button(
-                        onClick = if (state.showTokenImport) {
-                            viewModel::importSession
-                        } else {
-                            viewModel::login
+                        onClick = when (state.mode) {
+                            AuthMode.LOGIN -> viewModel::login
+                            AuthMode.REGISTER -> viewModel::register
+                            AuthMode.TOKEN_IMPORT -> viewModel::importSession
                         },
                         enabled = !state.isLoading,
                         shape = LinerShapes.Pill,
@@ -233,10 +275,31 @@ fun LoginScreen(
                             )
                         } else {
                             Text(
-                                text = if (state.showTokenImport) "Import session" else "Sign in",
+                                text = when (state.mode) {
+                                    AuthMode.LOGIN -> "Войти"
+                                    AuthMode.REGISTER -> "Создать аккаунт"
+                                    AuthMode.TOKEN_IMPORT -> "Импортировать сессию"
+                                },
                                 style = MaterialTheme.typography.labelLarge.copy(
                                     fontWeight = FontWeight.SemiBold
                                 )
+                            )
+                        }
+                    }
+
+                    if (!state.showTokenImport) {
+                        TextButton(
+                            onClick = viewModel::toggleRegisterMode,
+                            enabled = !state.isLoading,
+                            modifier = Modifier.align(Alignment.CenterHorizontally)
+                        ) {
+                            Text(
+                                text = if (state.isRegister) {
+                                    "Уже есть аккаунт? Войти"
+                                } else {
+                                    "Нет аккаунта? Зарегистрироваться"
+                                },
+                                color = LinerColors.TextPrimary
                             )
                         }
                     }
@@ -248,9 +311,9 @@ fun LoginScreen(
                     ) {
                         Text(
                             text = if (state.showTokenImport) {
-                                "Back to email & password"
+                                "Вернуться ко входу по почте"
                             } else {
-                                "Sign in with PC session token"
+                                "Войти по токену с ПК"
                             },
                             color = LinerColors.TextSecondary
                         )
