@@ -1,12 +1,42 @@
+# Dependencies & package managers
+node_modules/
+.pnp
+.pnp.*
+
+# Build outputs
+dist/
+dist-electron/
+release/
+*.tsbuildinfo
+*.log
+npm-debug.log*
+yarn-debug.log*
+.pnpm-debug.log*
+
+# Cloudflare Wrangler & secrets
+.wrangler/
+.dev.vars
+.env
+.env.*
+!.env.example
+*.pem
+
+# Android / Gradle / IDE
 .gradle/
+.kotlin/
 .idea/
 *.iml
 build/
 */build/
 */*/build/
 local.properties
-.DS_Store
 *.jks
 *.keystore
+*.apk
+*.aab
 
-.kotlin/
+# OS & scratch
+.DS_Store
+Thumbs.db
+scratch/
+test.py
