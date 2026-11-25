@@ -13,6 +13,7 @@ import `fun`.tryliner.android.core.network.InnertubeClient
 import `fun`.tryliner.android.core.network.LinerApiClient
 import `fun`.tryliner.android.data.EncryptedSessionStorage
 import `fun`.tryliner.android.playback.LanConnectManager
+import `fun`.tryliner.android.playback.PlaybackPreferencesStore
 import `fun`.tryliner.android.playback.PlayerController
 import `fun`.tryliner.android.playback.TrackDownloadManager
 import `fun`.tryliner.android.playback.TrackLoudnessStore
@@ -54,6 +55,8 @@ class AppContainer(context: Context) {
     )
     val innertubeClient = InnertubeClient()
 
+    val playbackPreferencesStore = PlaybackPreferencesStore(appContext)
+
     val loudnessStore = TrackLoudnessStore(
         context = appContext,
         scope = appScope
@@ -64,7 +67,8 @@ class AppContainer(context: Context) {
         innertubeClient = innertubeClient,
         apiClient = apiClient,
         scope = appScope,
-        loudnessStore = loudnessStore
+        loudnessStore = loudnessStore,
+        playbackPreferencesStore = playbackPreferencesStore
     )
 
     val playerController = PlayerController(
@@ -72,7 +76,8 @@ class AppContainer(context: Context) {
         apiClient = apiClient,
         innertubeClient = innertubeClient,
         scope = appScope,
-        loudnessStore = loudnessStore
+        loudnessStore = loudnessStore,
+        playbackPreferencesStore = playbackPreferencesStore
     ).also { it.downloadManager = downloadManager }
 
     val lanConnectManager = LanConnectManager(

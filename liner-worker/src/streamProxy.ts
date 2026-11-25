@@ -110,9 +110,105 @@ function isPlayableTranscoding(t: ScTranscoding): boolean {
   return false;
 }
 
+const UNWANTED_VARIANT_TOKENS = [
+  "slowed",
+  "reverb",
+  "nightcore",
+  "sped up",
+  "speed up",
+  "remix",
+  "cover",
+  "karaoke",
+  "8d",
+  "mashup",
+  "instrumental",
+  "live",
+  "bass boosted",
+  "bootleg",
+  "pitched",
+];
+
+function tokenizeNormalized(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]+/gu, " ")
+    .split(/\s+/)
+    .filter((t) => t.length >= 2);
+}
+
+interface ScSearchTrack {
+  title?: string;
+  duration?: number;
+  full_duration?: number;
+  policy?: string;
+  streamable?: boolean;
+  user?: { username?: string };
+  media?: { transcodings?: ScTranscoding[] };
+}
+
+function scoreSoundCloudCandidate(
+  item: ScSearchTrack,
+  expectedTitle: string,
+  expectedArtist: string,
+  expectedDurationMs: number,
+): number {
+  const scTitle = (item.title ?? "").toLowerCase();
+  const scAuthor = (item.user?.username ?? "").toLowerCase();
+  const expectedCombined = `${expectedTitle} ${expectedArtist}`.toLowerCase();
+  let score = 0;
+
+  for (const variant of UNWANTED_VARIANT_TOKENS) {
+    if (scTitle.includes(variant) && !expectedCombined.includes(variant)) {
+      score -= 100;
+    }
+  }
+
+  const titleTokens = tokenizeNormalized(expectedTitle);
+  const scTitleTokens = new Set(tokenizeNormalized(scTitle));
+  if (titleTokens.length > 0) {
+    let matched = 0;
+    for (const token of titleTokens) {
+      if (scTitleTokens.has(token) || scTitle.includes(token)) {
+        matched++;
+      }
+    }
+    score += Math.round((matched / titleTokens.length) * 35);
+    if (matched === 0) score -= 25;
+  }
+
+  const artistTokens = tokenizeNormalized(expectedArtist);
+  if (artistTokens.length > 0) {
+    const combinedSc = `${scTitle} ${scAuthor}`;
+    let matched = 0;
+    for (const token of artistTokens) {
+      if (combinedSc.includes(token)) {
+        matched++;
+      }
+    }
+    score += Math.round((matched / artistTokens.length) * 20);
+  }
+
+  const scDuration = item.full_duration ?? item.duration ?? 0;
+  if (expectedDurationMs > 0 && scDuration > 0) {
+    const diff = Math.abs(scDuration - expectedDurationMs);
+    if (diff <= 15_000) {
+      score += 25;
+    } else if (diff <= 30_000) {
+      score += 8;
+    } else if (diff > 45_000) {
+      score -= 40;
+    }
+  }
+
+  return score;
+}
+
 async function resolveSoundCloudOnEdge(
   query: string,
   diag: string[],
+  expectedTitle = "",
+  expectedArtist = "",
+  expectedDurationMs = 0,
 ): Promise<CachedStream | null> {
   const cleanQuery = query.trim();
   if (!cleanQuery) {
@@ -128,7 +224,7 @@ async function resolveSoundCloudOnEdge(
   try {
     const searchUrl =
       `https://api-v2.soundcloud.com/search/tracks?q=${encodeURIComponent(cleanQuery)}` +
-      `&client_id=${encodeURIComponent(clientId)}&limit=10`;
+      `&client_id=${encodeURIComponent(clientId)}&limit=15`;
     const searchRes = await fetch(searchUrl, {
       headers: { "User-Agent": BROWSER_UA, Accept: "application/json" },
       signal: AbortSignal.timeout(SC_API_TIMEOUT_MS),
@@ -139,14 +235,7 @@ async function resolveSoundCloudOnEdge(
     }
 
     const data = (await searchRes.json()) as {
-      collection?: Array<{
-        title?: string;
-        duration?: number;
-        full_duration?: number;
-        policy?: string;
-        streamable?: boolean;
-        media?: { transcodings?: ScTranscoding[] };
-      }>;
+      collection?: ScSearchTrack[];
     };
 
     const tracks = data.collection ?? [];
@@ -155,16 +244,33 @@ async function resolveSoundCloudOnEdge(
       return null;
     }
 
-    for (const item of tracks) {
-      if (item.policy === "BLOCK" || item.policy === "SNIP") continue;
-      if (item.streamable === false) continue;
-      if (
-        item.duration &&
-        item.full_duration &&
-        item.duration < item.full_duration - 5_000
-      ) {
-        continue;
-      }
+    const playableTracks = tracks
+      .filter((item) => {
+        if (item.policy === "BLOCK" || item.policy === "SNIP") return false;
+        if (item.streamable === false) return false;
+        if (
+          item.duration &&
+          item.full_duration &&
+          item.duration < item.full_duration - 5_000
+        ) {
+          return false;
+        }
+        return true;
+      })
+      .map((item, idx) => ({
+        item,
+        score: scoreSoundCloudCandidate(
+          item,
+          expectedTitle || cleanQuery,
+          expectedArtist,
+          expectedDurationMs,
+        ),
+        idx,
+      }))
+      .sort((a, b) => (b.score !== a.score ? b.score - a.score : a.idx - b.idx))
+      .map((entry) => entry.item);
+
+    for (const item of playableTracks) {
 
       const candidates = (item.media?.transcodings ?? [])
         .filter(isPlayableTranscoding)
@@ -274,6 +380,7 @@ async function resolveStreamForRelay(
   title: string,
   artist: string,
   diag: string[],
+  durationMs = 0,
 ): Promise<CachedStream | null> {
   const scTrackId = normalizeSoundCloudTrackId(rawId);
   const videoId = normalizeVideoId(rawId);
@@ -290,7 +397,7 @@ async function resolveStreamForRelay(
   if (!resolved) {
     const query = [artist, title].filter(Boolean).join(" ").trim();
     if (query) {
-      resolved = await resolveSoundCloudOnEdge(query, diag);
+      resolved = await resolveSoundCloudOnEdge(query, diag, title, artist, durationMs);
     }
   }
 
@@ -389,6 +496,7 @@ export const handleStreamProxyRequest: SubRouterHandler = async (
     const rawVideoId = ctx.url.searchParams.get("videoId") ?? "";
     const title = ctx.url.searchParams.get("title") ?? "";
     const artist = ctx.url.searchParams.get("artist") ?? "";
+    const durationMs = Math.max(0, Number(ctx.url.searchParams.get("durationMs") ?? "0") || 0);
     const scTrackId = normalizeSoundCloudTrackId(rawVideoId);
     const videoId = normalizeVideoId(rawVideoId);
 
@@ -397,7 +505,7 @@ export const handleStreamProxyRequest: SubRouterHandler = async (
     }
 
     const diag: string[] = [];
-    const stream = await resolveStreamForRelay(rawVideoId, title, artist, diag);
+    const stream = await resolveStreamForRelay(rawVideoId, title, artist, diag, durationMs);
     if (!stream) {
       return errorResponse(
         502,
@@ -413,6 +521,7 @@ export const handleStreamProxyRequest: SubRouterHandler = async (
     else if (videoId) params.set("videoId", videoId);
     if (title) params.set("title", title);
     if (artist) params.set("artist", artist);
+    if (durationMs > 0) params.set("durationMs", String(Math.round(durationMs)));
 
     return jsonResponse(
       {
@@ -433,6 +542,7 @@ export const handleStreamProxyRequest: SubRouterHandler = async (
     const rawVideoId = ctx.url.searchParams.get("videoId") ?? "";
     const title = ctx.url.searchParams.get("title") ?? "";
     const artist = ctx.url.searchParams.get("artist") ?? "";
+    const durationMs = Math.max(0, Number(ctx.url.searchParams.get("durationMs") ?? "0") || 0);
     const scTrackId = normalizeSoundCloudTrackId(rawVideoId);
     const videoId = normalizeVideoId(rawVideoId);
 
@@ -441,7 +551,7 @@ export const handleStreamProxyRequest: SubRouterHandler = async (
     }
 
     const diag: string[] = [];
-    const stream = await resolveStreamForRelay(rawVideoId, title, artist, diag);
+    const stream = await resolveStreamForRelay(rawVideoId, title, artist, diag, durationMs);
     if (!stream) {
       return errorResponse(
         502,

@@ -6,7 +6,9 @@ import androidx.lifecycle.viewModelScope
 import `fun`.tryliner.android.AppContainer
 import `fun`.tryliner.android.core.model.Track
 import `fun`.tryliner.android.core.model.UserPlaylist
+import `fun`.tryliner.android.playback.PlaybackPreferences
 import `fun`.tryliner.android.playback.PlaybackUiState
+import `fun`.tryliner.android.playback.PreferredPlatform
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -51,6 +53,22 @@ class LibraryViewModel(
     val likedTrackIds: StateFlow<Set<String>> = container.likedTrackIds
     val playbackState: StateFlow<PlaybackUiState> = container.playerController.state
     val downloadedTracks: StateFlow<List<Track>> = container.downloadManager.downloadedTracks
+    val playbackPreferences: StateFlow<PlaybackPreferences> = container.playbackPreferencesStore.preferences
+
+    fun setHasPlatformPriority(enabled: Boolean) {
+        container.playbackPreferencesStore.setHasPlatformPriority(enabled)
+        container.playerController.clearStreamCache()
+    }
+
+    fun setPreferredPlatform(platform: PreferredPlatform) {
+        container.playbackPreferencesStore.setPreferredPlatform(platform)
+        container.playerController.clearStreamCache()
+    }
+
+    fun redownloadAllAndClearCache() {
+        container.playerController.clearStreamCache()
+        container.downloadManager.redownloadAll()
+    }
 
     private var refreshJob: Job? = null
 

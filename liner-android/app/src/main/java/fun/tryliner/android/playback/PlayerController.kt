@@ -90,12 +90,14 @@ class PlayerController(
     private val innertubeClient: InnertubeClient,
     private val scope: CoroutineScope,
     private val loudnessStore: TrackLoudnessStore? = null,
+    private val playbackPreferencesStore: PlaybackPreferencesStore? = null,
 ) {
     private val _state = MutableStateFlow(PlaybackUiState())
     val state: StateFlow<PlaybackUiState> = _state.asStateFlow()
 
     var onBeforeLocalPlayback: (() -> Unit)? = null
     var onApplyLoudnessDb: ((Float?) -> Unit)? = null
+    var onClearAudioCache: (() -> Unit)? = null
 
     /** Set by AppContainer; when a track is downloaded, playback uses the local file. */
     var downloadManager: TrackDownloadManager? = null
@@ -581,6 +583,15 @@ class PlayerController(
         _state.update { it.copy(errorMessage = null) }
     }
 
+    fun clearStreamCache() {
+        synchronized(streamCacheLock) {
+            streamCache.clear()
+        }
+        preferRelayUntilMs = 0L
+        lastRelayFallbackTrackId = null
+        onClearAudioCache?.invoke()
+    }
+
     private fun playIndex(
         index: Int,
         initialPositionMs: Long = 0L,
@@ -761,6 +772,33 @@ class PlayerController(
         ) {
             return resolveViaWorkerRelay(track, now)
         }
+
+        val prefs = playbackPreferencesStore?.preferences?.value ?: PlaybackPreferences()
+        if (prefs.hasPlatformPriority) {
+            return when (prefs.preferredPlatform) {
+                PreferredPlatform.SOUNDCLOUD -> {
+                    runCatching { resolveViaWorkerRelay(track, now) }
+                        .getOrElse { relayErr ->
+                            Log.w("PlayerController", "Preferred SC relay failed for ${track.id}, trying YT: ${relayErr.message}")
+                            resolveDirectInnertube(track, now)
+                        }
+                }
+                PreferredPlatform.YOUTUBE -> {
+                    try {
+                        withTimeout(2_500L) {
+                            resolveDirectInnertube(track, now)
+                        }
+                    } catch (directErr: Exception) {
+                        if (directErr is CancellationException && directErr !is TimeoutCancellationException) {
+                            throw directErr
+                        }
+                        Log.w("PlayerController", "Preferred YT failed for ${track.id} (${directErr.message}), falling back to relay")
+                        resolveViaWorkerRelay(track, System.currentTimeMillis())
+                    }
+                }
+            }
+        }
+
         if (now < preferRelayUntilMs) {
             return runCatching { resolveViaWorkerRelay(track, now) }
                 .getOrElse { relayErr ->
@@ -849,6 +887,7 @@ class PlayerController(
             videoId = track.id,
             title = track.title,
             artist = track.artistNames,
+            durationMs = track.durationMs,
         )
         Log.i("PlayerController", "Resolved relay stream for ${track.id}: source=${resolved.source} hls=${resolved.isHls}")
         return CachedResolvedStream(

@@ -403,6 +403,7 @@ class LinerApiClient(
         videoId: String,
         title: String? = null,
         artist: String? = null,
+        durationMs: Long = 0L,
     ): ResolvedRelayStream {
         val query = buildString {
             append("videoId=").append(urlEncode(videoId))
@@ -411,6 +412,9 @@ class LinerApiClient(
             }
             if (!artist.isNullOrBlank()) {
                 append("&artist=").append(urlEncode(artist))
+            }
+            if (durationMs > 0L) {
+                append("&durationMs=").append(durationMs)
             }
         }
         return request("GET", "/v1/stream/resolve?$query")

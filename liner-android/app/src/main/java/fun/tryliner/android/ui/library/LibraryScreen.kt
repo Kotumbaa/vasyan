@@ -58,6 +58,7 @@ import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -68,6 +69,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -95,6 +98,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import `fun`.tryliner.android.R
 import `fun`.tryliner.android.core.model.Track
 import `fun`.tryliner.android.core.model.UserPlaylist
+import `fun`.tryliner.android.playback.PlaybackPreferences
+import `fun`.tryliner.android.playback.PreferredPlatform
 import `fun`.tryliner.android.ui.components.LikedTracksArtwork
 import `fun`.tryliner.android.ui.components.LinerChip
 import `fun`.tryliner.android.ui.components.LinerCoverArt
@@ -135,6 +140,8 @@ fun LibraryScreen(
         }
     }
     val downloadedTracks by viewModel.downloadedTracks.collectAsStateWithLifecycle()
+    val playbackPrefs by viewModel.playbackPreferences.collectAsStateWithLifecycle()
+    var isSettingsOpen by rememberSaveable { mutableStateOf(false) }
     val hasDownloads = downloadedTracks.isNotEmpty()
     val haptics = LocalHapticFeedback.current
     val localFallbackHaze = remember { HazeState() }
@@ -594,6 +601,24 @@ fun LibraryScreen(
                             viewModel.refresh()
                         }
                     )
+                    Surface(
+                        onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            isSettingsOpen = true
+                        },
+                        shape = CircleShape,
+                        color = LinerColors.HeroGlass,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Rounded.Settings,
+                                contentDescription = "Настройки",
+                                tint = Color.White.copy(alpha = 0.85f),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
                     GlassCircleIconButton(
                         iconRes = R.drawable.ic_mgc_exit_line,
                         contentDescription = "Выйти",
@@ -614,6 +639,152 @@ fun LibraryScreen(
             onDismiss = viewModel::dismissCreatePlaylistDialog,
             onCreate = viewModel::createPlaylist
         )
+    }
+
+    if (isSettingsOpen) {
+        PlaybackSettingsDialog(
+            preferences = playbackPrefs,
+            downloadedCount = downloadedTracks.size,
+            onTogglePriority = viewModel::setHasPlatformPriority,
+            onSelectPlatform = viewModel::setPreferredPlatform,
+            onRedownloadAndClearCache = {
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                viewModel.redownloadAllAndClearCache()
+                isSettingsOpen = false
+            },
+            onDismiss = { isSettingsOpen = false }
+        )
+    }
+}
+
+@Composable
+private fun PlaybackSettingsDialog(
+    preferences: PlaybackPreferences,
+    downloadedCount: Int,
+    onTogglePriority: (Boolean) -> Unit,
+    onSelectPlatform: (PreferredPlatform) -> Unit,
+    onRedownloadAndClearCache: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        LinerPanel(
+            shape = LinerShapes.Panel,
+            containerColor = LinerColors.BgPanel,
+            borderColor = Color.Transparent,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Text(
+                    text = "Настройки источника",
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                    color = LinerColors.TextPrimary
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                        Text(
+                            text = "Приоритет платформы",
+                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
+                            color = LinerColors.TextPrimary
+                        )
+                        Text(
+                            text = if (preferences.hasPlatformPriority) {
+                                "Сначала выбранная платформа, затем запасная"
+                            } else {
+                                "Авто: кто быстрее ответит (YouTube или SoundCloud)"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = LinerColors.TextSecondary
+                        )
+                    }
+                    Switch(
+                        checked = preferences.hasPlatformPriority,
+                        onCheckedChange = onTogglePriority,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = LinerColors.BtnPrimaryText,
+                            checkedTrackColor = LinerColors.BtnPrimaryBg,
+                            uncheckedThumbColor = LinerColors.TextSecondary,
+                            uncheckedTrackColor = LinerColors.FillStrong,
+                            uncheckedBorderColor = Color.Transparent
+                        )
+                    )
+                }
+
+                if (preferences.hasPlatformPriority) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "Предпочитаемая платформа",
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Medium),
+                            color = LinerColors.TextSecondary
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            PreferredPlatform.entries.forEach { platform ->
+                                val selected = preferences.preferredPlatform == platform
+                                Surface(
+                                    onClick = { onSelectPlatform(platform) },
+                                    shape = LinerShapes.Pill,
+                                    color = if (selected) LinerColors.BtnPrimaryBg else LinerColors.Fill,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Box(
+                                        modifier = Modifier.padding(vertical = 10.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = platform.label,
+                                            style = MaterialTheme.typography.labelLarge.copy(
+                                                fontWeight = FontWeight.SemiBold
+                                            ),
+                                            color = if (selected) LinerColors.BtnPrimaryText else LinerColors.TextPrimary
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Button(
+                    onClick = onRedownloadAndClearCache,
+                    shape = LinerShapes.Pill,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = LinerColors.FillHover,
+                        contentColor = LinerColors.TextPrimary
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = if (downloadedCount > 0) {
+                            "Перекачать загрузки ($downloadedCount) и очистить кэш"
+                        } else {
+                            "Очистить кэш потоков"
+                        },
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold)
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Готово", color = LinerColors.TextSecondary)
+                    }
+                }
+            }
+        }
     }
 }
 

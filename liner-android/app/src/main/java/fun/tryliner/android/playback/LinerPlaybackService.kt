@@ -113,6 +113,16 @@ class LinerPlaybackService : MediaSessionService() {
         playerController.onApplyLoudnessDb = { loudnessDb ->
             applyLoudnessNormalization(player, loudnessDb)
         }
+        playerController.onClearAudioCache = {
+            serviceScope?.launch(Dispatchers.IO) {
+                val c = audioCache ?: return@launch
+                runCatching {
+                    c.keys.toList().forEach { key ->
+                        c.removeResource(key)
+                    }
+                }
+            }
+        }
 
         val listener = object : Player.Listener {
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
@@ -198,6 +208,7 @@ class LinerPlaybackService : MediaSessionService() {
         serviceScope = null
         playerControllerRef?.onBeforeLocalPlayback = null
         playerControllerRef?.onApplyLoudnessDb = null
+        playerControllerRef?.onClearAudioCache = null
         playerControllerRef = null
         runCatching { loudnessEnhancer?.release() }
         loudnessEnhancer = null

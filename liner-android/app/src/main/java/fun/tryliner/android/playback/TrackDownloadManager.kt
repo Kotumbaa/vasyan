@@ -56,6 +56,7 @@ class TrackDownloadManager(
     private val apiClient: LinerApiClient,
     private val scope: CoroutineScope,
     private val loudnessStore: TrackLoudnessStore? = null,
+    private val playbackPreferencesStore: PlaybackPreferencesStore? = null,
 ) {
     private val downloadsDir = File(context.filesDir, "downloads").apply { mkdirs() }
     private val indexFile = File(downloadsDir, "index.json")
@@ -127,8 +128,22 @@ class TrackDownloadManager(
         tracks.forEach { download(it) }
     }
 
-    fun download(track: Track) {
-        if (jobs[track.id]?.isActive == true || isDownloaded(track.id)) return
+    /**
+     * Re-downloads every currently saved offline track using the current platform
+     * priority and re-measures its loudness into [loudnessStore].
+     */
+    fun redownloadAll() {
+        val currentTracks = _downloadedTracks.value
+        if (currentTracks.isEmpty()) return
+        currentTracks.forEach { track ->
+            jobs.remove(track.id)?.cancel()
+            loudnessStore?.remove(track.id)
+            download(track, force = true)
+        }
+    }
+
+    fun download(track: Track, force: Boolean = false) {
+        if (!force && (jobs[track.id]?.isActive == true || isDownloaded(track.id))) return
         setState(track.id, TrackDownloadState.Downloading(0f))
         val job = scope.launch(Dispatchers.IO) {
             val myJob = coroutineContext[Job]
@@ -185,8 +200,25 @@ class TrackDownloadManager(
         if (track.id.startsWith("sp:", ignoreCase = true) ||
             track.id.startsWith("sc:", ignoreCase = true)
         ) {
-            val relay = apiClient.resolveStream(track.id, track.title, track.artistNames)
+            val relay = apiClient.resolveStream(track.id, track.title, track.artistNames, track.durationMs)
             return DownloadTarget(url = relay.url, isHls = relay.isHls)
+        }
+        val prefs = playbackPreferencesStore?.preferences?.value ?: PlaybackPreferences()
+        if (prefs.hasPlatformPriority && prefs.preferredPlatform == PreferredPlatform.SOUNDCLOUD) {
+            return try {
+                val relay = apiClient.resolveStream(track.id, track.title, track.artistNames, track.durationMs)
+                DownloadTarget(url = relay.url, isHls = relay.isHls)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                val direct = innertubeClient.resolveAudioStream(track.id)
+                DownloadTarget(
+                    url = direct.url,
+                    contentLength = direct.contentLength,
+                    isHls = false,
+                    loudnessDb = direct.loudnessDb
+                )
+            }
         }
         return try {
             val direct = innertubeClient.resolveAudioStream(track.id)
@@ -199,7 +231,7 @@ class TrackDownloadManager(
         } catch (e: CancellationException) {
             throw e
         } catch (_: Throwable) {
-            val relay = apiClient.resolveStream(track.id, track.title, track.artistNames)
+            val relay = apiClient.resolveStream(track.id, track.title, track.artistNames, track.durationMs)
             DownloadTarget(url = relay.url, isHls = relay.isHls)
         }
     }
