@@ -1,0 +1,15 @@
+name = "liner-worker"
+main = "src/index.ts"
+compatibility_date = "2025-02-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "liner-db"
+database_id = "da54d369-1579-47ef-9fce-d0110fbde605"
+
+[ai]
+binding = "AI"
+
+[vars]
+ENVIRONMENT = "development"
